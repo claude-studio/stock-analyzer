@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis.claude_runner import ClaudeRunner
 from app.analysis.prompts import build_analysis_prompt
+from app.core.auth import check_rate_limit, verify_api_key
 from app.core.config import settings
 from app.database.session import async_session_factory, get_db
 from app.service.db_service import (
@@ -22,7 +23,7 @@ from app.service.db_service import (
 )
 
 logger = structlog.get_logger(__name__)
-router = APIRouter(prefix="/api/v1", tags=["stocks"])
+router = APIRouter(prefix="/api/v1", tags=["stocks"], dependencies=[Depends(verify_api_key)])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -194,6 +195,7 @@ async def _run_analysis(ticker: str) -> None:
 @router.post(
     "/stocks/{ticker}/analysis/request",
     status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(check_rate_limit)],
 )
 async def request_stock_analysis(
     ticker: str,

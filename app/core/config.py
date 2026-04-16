@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     CLAUDE_TIMEOUT: int = 120
     DART_API_KEY: str = ""
     TEAMS_WEBHOOK_URL: str = ""
+    API_KEY: str = ""
     MODE: str = "PRD"
     KR_WATCHLIST: list[str] = ["005930", "000660", "035420"]
     US_WATCHLIST: list[str] = ["SPY", "QQQ", "AAPL"]
