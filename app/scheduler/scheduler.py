@@ -6,7 +6,10 @@ import structlog
 
 from app.scheduler.jobs import (
     job_claude_analysis,
+    job_dart_collect,
+    job_evaluate_accuracy,
     job_krx_close,
+    job_market_summary,
     job_news_collect,
     job_pre_market,
     job_us_close,
@@ -77,6 +80,32 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         day_of_week="tue-sat",
         hour=5,
         minute=30,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        job_market_summary,
+        "cron",
+        id="market_summary",
+        day_of_week="mon-fri",
+        hour=17,
+        minute=0,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        job_evaluate_accuracy,
+        "cron",
+        id="evaluate_accuracy",
+        hour=7,
+        minute=0,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        job_dart_collect,
+        "cron",
+        id="dart_collect",
+        day_of_week="mon-fri",
+        hour=16,
+        minute=10,
         replace_existing=True,
     )
     logger.info("scheduler_jobs_registered", job_count=len(scheduler.get_jobs()))
