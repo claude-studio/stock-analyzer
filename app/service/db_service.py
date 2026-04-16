@@ -185,22 +185,42 @@ async def get_daily_prices(
 # ──────────────────────────────────────────────
 
 
-async def upsert_news_articles(session: AsyncSession, articles: list[dict]) -> int:
-    """뉴스 기사 upsert (url 기준 중복 제거)."""
+async def upsert_news_articles(
+    session: AsyncSession,
+    articles: list[dict],
+    stock_id_map: dict[str, int] | None = None,
+) -> int:
+    """뉴스 기사 upsert (url 기준 중복 제거).
+
+    stock_id_map이 주어지면 제목에서 종목을 매칭하여 stock_id를 설정한다.
+    """
     if not articles:
         return 0
 
+    matcher = None
+    if stock_id_map:
+        from app.utils.stock_matcher import StockMatcher
+
+        matcher = StockMatcher(stock_id_map)
+
     rows = []
     for art in articles:
-        url = art.get("link", "")
+        url = (art.get("link") or "").strip()
         if not url:
             continue
+        title = art.get("title", "")[:500]
+        matched_stock_id = None
+        if matcher:
+            matched = matcher.match(title)
+            if matched:
+                matched_stock_id = matched[0]
         rows.append(
             {
-                "title": art.get("title", "")[:500],
+                "title": title,
                 "source": art.get("source", "unknown")[:50],
                 "url": url,
                 "published_at": _parse_datetime(art.get("published", art.get("collected_at"))),
+                "stock_id": matched_stock_id,
                 "sentiment_score": None,
                 "sentiment_label": None,
             }
