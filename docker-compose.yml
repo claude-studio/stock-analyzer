@@ -1,0 +1,63 @@
+services:
+  stock-api:
+    build:
+      context: .
+      platforms:
+        - linux/arm64
+    container_name: stock-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=Asia/Seoul
+    volumes:
+      - claude_auth:/root/.claude
+      - ./data:/app/data
+    networks:
+      - stock_net
+      - infra_net
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      stock-redis:
+        condition: service_healthy
+
+  stock-redis:
+    image: redis:7-alpine
+    container_name: stock-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 100
+    volumes:
+      - redis_data:/data
+    networks:
+      - stock_net
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  stock_net:
+    driver: bridge
+  infra_net:
+    external: true
+    name: infra_default
+
+volumes:
+  redis_data:
+  claude_auth:

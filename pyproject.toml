@@ -1,0 +1,56 @@
+[project]
+name = "stock-analyzer"
+version = "0.1.0"
+description = "Claude Code Headless 기반 주식 분석 서버"
+requires-python = ">=3.12"
+dependencies = [
+    # Web framework
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    # Database
+    "sqlalchemy[asyncio]>=2.0.0",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    # Cache
+    "redis>=5.0.0",
+    # Data collection
+    "pykrx>=1.0.47",
+    "finance-datareader>=0.9.50",
+    "yfinance>=0.2.50",
+    "opendartreader>=0.7.12",
+    "feedparser>=6.0.11",
+    "pandas-market-calendars>=4.4.2",
+    # Scheduler
+    "apscheduler>=3.10.0,<4.0.0",
+    # Portfolio
+    "pyportfolioopt>=1.5.0",
+    # HTTP
+    "httpx>=0.28.0",
+    # Settings
+    "pydantic-settings>=2.0.0",
+    # Logging
+    "structlog>=24.0.0",
+    # Utilities
+    "pandas>=2.0.0",
+    "beautifulsoup4>=4.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "httpx",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
