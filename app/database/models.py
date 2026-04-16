@@ -129,3 +129,29 @@ class CollectionLog(Base):
     duration_ms: Mapped[int | None]
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AccuracyTracker(Base):
+    """추천 적중률 추적 테이블."""
+
+    __tablename__ = "accuracy_tracker"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    analysis_report_id: Mapped[int] = mapped_column(ForeignKey("analysis_reports.id"))
+    ticker: Mapped[str] = mapped_column(String(20), index=True)
+    recommendation: Mapped[str] = mapped_column(String(20))  # strong_buy/buy/hold/sell/strong_sell
+    confidence: Mapped[Decimal | None] = mapped_column(Numeric(3, 2))
+    target_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    entry_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))  # 분석 당일 종가
+    actual_price_7d: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    actual_price_30d: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    actual_return_7d: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))  # 수익률 (소수)
+    actual_return_30d: Mapped[Decimal | None] = mapped_column(Numeric(8, 4))
+    is_hit_7d: Mapped[bool | None]  # 추천 방향과 실제 방향 일치 여부
+    is_hit_30d: Mapped[bool | None]
+    evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    analysis_report: Mapped["AnalysisReport"] = relationship()
