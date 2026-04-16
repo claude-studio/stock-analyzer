@@ -71,7 +71,7 @@ class NewsArticle(Base):
     stock_id: Mapped[int | None] = mapped_column(ForeignKey("stocks.id"))
     title: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(50))
-    url: Mapped[str | None] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(Text, unique=True)
     published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     sentiment_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
     sentiment_label: Mapped[str | None] = mapped_column(String(10))
