@@ -13,6 +13,7 @@ from app.analysis.prompts import build_analysis_prompt
 from app.core.auth import check_rate_limit, verify_api_key
 from app.core.config import settings
 from app.database.session import async_session_factory, get_db
+from app.analysis.accuracy import get_accuracy_stats
 from app.service.db_service import (
     get_daily_prices,
     get_latest_analysis,
@@ -33,6 +34,24 @@ def _decimal_to_float(v: Decimal | None) -> float | None:
     if v is None:
         return None
     return float(v)
+
+
+@router.get("/accuracy")
+async def get_accuracy(
+    session: DbSession,
+    days: int = Query(default=90, ge=7, le=365, description="조회 기간 (일)"),
+) -> dict[str, Any]:
+    """추천 적중률 통계를 반환한다."""
+    stats = await get_accuracy_stats(session, days)
+
+    def _convert(v: Any) -> Any:
+        if isinstance(v, Decimal):
+            return float(v)
+        if isinstance(v, dict):
+            return {k: _convert(val) for k, val in v.items()}
+        return v
+
+    return {k: _convert(v) for k, v in stats.items()}
 
 
 @router.get("/stocks")
