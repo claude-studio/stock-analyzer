@@ -1,48 +1,126 @@
 """주식 API 라우터."""
 
 from datetime import date
-from typing import Any
+from decimal import Decimal
+from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.analysis.claude_runner import ClaudeRunner
+from app.analysis.prompts import build_analysis_prompt
+from app.core.config import settings
+from app.database.session import async_session_factory, get_db
+from app.service.db_service import (
+    get_daily_prices,
+    get_latest_analysis,
+    get_recent_news,
+    get_stock_by_ticker,
+    list_stocks as db_list_stocks,
+    save_analysis_report,
+)
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["stocks"])
 
+DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+def _decimal_to_float(v: Decimal | None) -> float | None:
+    """Decimal을 JSON 직렬화 가능한 float으로 변환한다."""
+    if v is None:
+        return None
+    return float(v)
+
 
 @router.get("/stocks")
-async def list_stocks() -> dict[str, Any]:
+async def list_stocks(
+    session: DbSession,
+    market: str | None = Query(default=None, description="시장 필터 (KRX, NYSE 등)"),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
     """종목 목록을 반환한다."""
-    # TODO: DB에서 stock_listings 테이블 조회
+    stocks, total = await db_list_stocks(session, market=market, limit=limit, offset=offset)
     return {
-        "stocks": [],
-        "total": 0,
+        "stocks": [
+            {
+                "ticker": s.ticker,
+                "name": s.name,
+                "market": s.market,
+                "sector": s.sector,
+            }
+            for s in stocks
+        ],
+        "total": total,
     }
 
 
 @router.get("/stocks/{ticker}/prices")
 async def get_stock_prices(
     ticker: str,
+    session: DbSession,
     start_date: date | None = Query(default=None, description="조회 시작일"),
     end_date: date | None = Query(default=None, description="조회 종료일"),
+    limit: int = Query(default=60, ge=1, le=365),
 ) -> dict[str, Any]:
     """종목 가격 히스토리를 반환한다."""
-    # TODO: DB에서 stocks_ohlcv 테이블 조회 (ticker, start_date, end_date 필터)
+    stock = await get_stock_by_ticker(session, ticker)
+    if not stock:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"종목을 찾을 수 없습니다: {ticker}",
+        )
+
+    prices = await get_daily_prices(
+        session, stock.id, start_date=start_date, end_date=end_date, limit=limit,
+    )
     return {
         "ticker": ticker,
-        "start_date": str(start_date) if start_date else None,
-        "end_date": str(end_date) if end_date else None,
-        "prices": [],
+        "prices": [
+            {
+                "trade_date": str(p.trade_date),
+                "open": _decimal_to_float(p.open),
+                "high": _decimal_to_float(p.high),
+                "low": _decimal_to_float(p.low),
+                "close": _decimal_to_float(p.close),
+                "volume": p.volume,
+            }
+            for p in prices
+        ],
     }
 
 
 @router.get("/stocks/{ticker}/analysis")
-async def get_stock_analysis(ticker: str) -> dict[str, Any]:
+async def get_stock_analysis(ticker: str, session: DbSession) -> dict[str, Any]:
     """최근 분석 리포트를 반환한다."""
-    # TODO: DB에서 analysis_reports 테이블 조회 (ticker 기준 최신 1건)
+    stock = await get_stock_by_ticker(session, ticker)
+    if not stock:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"종목을 찾을 수 없습니다: {ticker}",
+        )
+
+    report = await get_latest_analysis(session, stock.id)
+    if not report:
+        return {"ticker": ticker, "analysis": None}
+
     return {
         "ticker": ticker,
-        "analysis": None,
+        "analysis": {
+            "analysis_date": str(report.analysis_date),
+            "analysis_type": report.analysis_type,
+            "summary": report.summary,
+            "recommendation": report.recommendation,
+            "confidence": _decimal_to_float(report.confidence),
+            "target_price": _decimal_to_float(report.target_price),
+            "key_factors": report.key_factors,
+            "bull_case": report.bull_case,
+            "bear_case": report.bear_case,
+            "model_used": report.model_used,
+            "created_at": str(report.created_at) if report.created_at else None,
+        },
     }
 
 
@@ -59,8 +137,58 @@ async def get_market_overview() -> dict[str, Any]:
 
 async def _run_analysis(ticker: str) -> None:
     """백그라운드에서 Claude 분석을 실행한다."""
-    # TODO: Claude CLI로 종목 분석 실행 후 analysis_reports에 저장
     logger.info("on_demand_analysis_started", ticker=ticker)
+
+    async with async_session_factory() as session:
+        try:
+            stock = await get_stock_by_ticker(session, ticker)
+            if not stock:
+                logger.error("on_demand_analysis_stock_not_found", ticker=ticker)
+                return
+
+            prices = await get_daily_prices(session, stock.id, limit=5)
+            news = await get_recent_news(session, stock_id=stock.id, limit=5)
+
+            prices_summary = "\n".join(
+                f"{p.trade_date}: 종가 {float(p.close):,.0f} / 거래량 {p.volume:,}"
+                for p in prices
+            ) or "가격 데이터 없음"
+
+            news_summary = "\n".join(
+                f"- {n.title}" for n in news
+            ) or "관련 뉴스 없음"
+
+            prompt = build_analysis_prompt(
+                ticker=stock.ticker,
+                name=stock.name,
+                prices_summary=prices_summary,
+                news_summary=news_summary,
+                market_context=f"시장: {stock.market}",
+            )
+
+            runner = ClaudeRunner(
+                claude_path=settings.CLAUDE_PATH,
+                timeout=settings.CLAUDE_TIMEOUT,
+            )
+            result = await runner.run(prompt)
+
+            if not isinstance(result, dict):
+                logger.error("on_demand_analysis_invalid_result", ticker=ticker)
+                return
+
+            await save_analysis_report(
+                session,
+                stock_id=stock.id,
+                analysis_date=date.today(),
+                analysis_type="on_demand",
+                result=result,
+                model_used="claude-code-headless",
+            )
+            await session.commit()
+            logger.info("on_demand_analysis_completed", ticker=ticker)
+        except Exception as e:
+            await session.rollback()
+            logger.exception("on_demand_analysis_failed", ticker=ticker, error=str(e))
 
 
 @router.post(
@@ -69,9 +197,17 @@ async def _run_analysis(ticker: str) -> None:
 )
 async def request_stock_analysis(
     ticker: str,
+    session: DbSession,
     background_tasks: BackgroundTasks,
 ) -> dict[str, str]:
     """온디맨드 Claude 분석을 트리거한다."""
+    stock = await get_stock_by_ticker(session, ticker)
+    if not stock:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"종목을 찾을 수 없습니다: {ticker}",
+        )
+
     background_tasks.add_task(_run_analysis, ticker)
     logger.info("on_demand_analysis_queued", ticker=ticker)
     return {
