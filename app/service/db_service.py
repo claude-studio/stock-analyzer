@@ -9,6 +9,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database.models import (
     AnalysisReport,
@@ -261,6 +262,41 @@ async def get_recent_news(
     query = query.order_by(NewsArticle.published_at.desc()).limit(limit)
     result = await session.execute(query)
     return list(result.scalars().all())
+
+
+async def get_recent_news_with_stock(
+    session: AsyncSession,
+    stock_id: int | None = None,
+    ticker: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """뉴스 + 종목 정보 조인 조회."""
+    query = (
+        select(NewsArticle)
+        .outerjoin(Stock, NewsArticle.stock_id == Stock.id)
+        .options(selectinload(NewsArticle.stock))
+    )
+    if stock_id:
+        query = query.where(NewsArticle.stock_id == stock_id)
+    elif ticker:
+        query = query.where(Stock.ticker == ticker)
+    query = query.order_by(NewsArticle.published_at.desc()).limit(limit)
+    result = await session.execute(query)
+    articles = list(result.scalars().all())
+    return [
+        {
+            "id": a.id,
+            "title": a.title,
+            "source": a.source,
+            "url": a.url,
+            "published_at": str(a.published_at) if a.published_at else None,
+            "sentiment_score": float(a.sentiment_score) if a.sentiment_score is not None else None,
+            "sentiment_label": a.sentiment_label,
+            "stock_ticker": a.stock.ticker if a.stock else None,
+            "stock_name": a.stock.name if a.stock else None,
+        }
+        for a in articles
+    ]
 
 
 # ──────────────────────────────────────────────

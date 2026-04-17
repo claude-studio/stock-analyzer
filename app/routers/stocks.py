@@ -6,12 +6,14 @@ from decimal import Decimal
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis.claude_runner import ClaudeRunner
 from app.analysis.prompts import build_analysis_prompt
+from app.analysis.technical import calculate_technical_indicators
 from app.core.auth import check_rate_limit, verify_api_key
 from app.core.config import settings
 from app.database.session import async_session_factory, get_db
@@ -20,6 +22,7 @@ from app.service.db_service import (
     get_daily_prices,
     get_latest_analysis,
     get_recent_news,
+    get_recent_news_with_stock,
     get_stock_by_ticker,
     list_stocks as db_list_stocks,
     save_analysis_report,
@@ -77,6 +80,108 @@ async def list_stocks(
         ],
         "total": total,
     }
+
+
+def _prices_to_indicators(prices: list) -> dict[str, Any] | None:
+    """DailyPrice 목록을 기술적 지표 dict로 변환한다."""
+    if len(prices) < 2:
+        return None
+    df = pd.DataFrame(
+        [
+            {
+                "open": float(p.open),
+                "high": float(p.high),
+                "low": float(p.low),
+                "close": float(p.close),
+                "volume": p.volume,
+            }
+            for p in prices
+        ]
+    )
+    return calculate_technical_indicators(df)
+
+
+@router.get("/news")
+async def list_news(
+    session: DbSession,
+    limit: int = Query(default=50, ge=1, le=200),
+    ticker: str | None = Query(default=None),
+) -> dict[str, Any]:
+    """전체 뉴스 피드 (최근 뉴스 목록)."""
+    stock_id: int | None = None
+    if ticker:
+        stock = await get_stock_by_ticker(session, ticker)
+        if not stock:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"종목을 찾을 수 없습니다: {ticker}",
+            )
+        stock_id = stock.id
+
+    news = await get_recent_news_with_stock(
+        session, stock_id=stock_id, ticker=ticker if not stock_id else None, limit=limit,
+    )
+    return {"news": news, "total": len(news)}
+
+
+@router.get("/stocks/{ticker}/technical")
+async def get_technical_indicators(ticker: str, session: DbSession) -> dict[str, Any]:
+    """기술적 지표 계산 결과."""
+    stock = await get_stock_by_ticker(session, ticker)
+    if not stock:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"종목을 찾을 수 없습니다: {ticker}",
+        )
+
+    prices = await get_daily_prices(session, stock.id, limit=60)
+    indicators = _prices_to_indicators(prices)
+    if indicators is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"기술적 지표 계산에 필요한 가격 데이터가 부족합니다: {ticker}",
+        )
+
+    return {"ticker": ticker, "indicators": indicators}
+
+
+@router.get("/watchlist")
+async def get_watchlist_summary(session: DbSession) -> dict[str, Any]:
+    """관심 종목 요약 (대시보드용)."""
+    watchlist_items: list[dict[str, Any]] = []
+
+    for ticker in settings.KR_WATCHLIST:
+        stock = await get_stock_by_ticker(session, ticker)
+        if not stock:
+            continue
+
+        prices = await get_daily_prices(session, stock.id, limit=2)
+        report = await get_latest_analysis(session, stock.id)
+
+        close_val: float | None = None
+        change_pct: float | None = None
+        volume: int | None = None
+
+        if prices:
+            latest = prices[-1]
+            close_val = float(latest.close)
+            volume = latest.volume
+            if len(prices) >= 2:
+                prev_close = float(prices[-2].close)
+                if prev_close > 0:
+                    change_pct = round((close_val - prev_close) / prev_close * 100, 2)
+
+        watchlist_items.append({
+            "ticker": stock.ticker,
+            "name": stock.name,
+            "close": close_val,
+            "change_pct": change_pct,
+            "volume": volume,
+            "recommendation": report.recommendation if report else None,
+            "analysis_date": str(report.analysis_date) if report else None,
+        })
+
+    return {"watchlist": watchlist_items}
 
 
 @router.get("/stocks/{ticker}/prices")
@@ -176,6 +281,8 @@ async def get_stock_detail(ticker: str, session: DbSession) -> dict[str, Any]:
             "created_at": str(report.created_at) if report.created_at else None,
         }
 
+    technical_data = _prices_to_indicators(prices)
+
     return {
         "stock": {
             "ticker": stock.ticker,
@@ -201,9 +308,11 @@ async def get_stock_detail(ticker: str, session: DbSession) -> dict[str, Any]:
                 "source": n.source,
                 "published_at": str(n.published_at) if n.published_at else None,
                 "sentiment_label": n.sentiment_label,
+                "sentiment_score": _decimal_to_float(n.sentiment_score),
             }
             for n in news
         ],
+        "technical": technical_data,
     }
 
 
