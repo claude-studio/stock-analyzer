@@ -2,11 +2,59 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { fetchAPI } from "@/lib/api";
-import type { Stock, AnalysisReport, DailyPrice } from "@/lib/api";
+import type { Stock, AnalysisReport, DailyPrice, TechnicalIndicators, NewsArticle } from "@/lib/api";
 import StockChartWrapper from "@/components/charts/StockChartWrapper";
 
-function RecommendationBadge({ recommendation }: { recommendation: string }) {
+function formatNumber(val: number | null | undefined, opts?: Intl.NumberFormatOptions): string {
+  if (val == null) return "-";
+  return val.toLocaleString("ko-KR", opts);
+}
+
+function formatChangePct(val: number | null | undefined): string {
+  if (val == null) return "-";
+  const sign = val >= 0 ? "+" : "";
+  return `${sign}${val.toFixed(2)}%`;
+}
+
+function changePctColor(val: number | null | undefined): string {
+  if (val == null) return "text-gray-500";
+  if (val > 0) return "text-green-500";
+  if (val < 0) return "text-red-500";
+  return "text-gray-400";
+}
+
+function relativeTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return "-";
+  try {
+    const now = Date.now();
+    const then = new Date(dateStr).getTime();
+    if (isNaN(then)) return dateStr;
+    const diffMs = now - then;
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return "방금 전";
+    if (diffMin < 60) return `${diffMin}분 전`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}시간 전`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 30) return `${diffDay}일 전`;
+    return dateStr.slice(0, 10);
+  } catch {
+    return dateStr;
+  }
+}
+
+function sentimentDotColor(label: string | null | undefined): string {
+  if (!label) return "bg-gray-400";
+  const lower = label.toLowerCase();
+  if (lower === "positive") return "bg-emerald-400";
+  if (lower === "negative") return "bg-rose-400";
+  return "bg-gray-400";
+}
+
+function RecommendationBadge({ recommendation }: { recommendation: string | null | undefined }) {
+  if (!recommendation) return null;
   const lower = recommendation.toLowerCase();
   let bgColor = "bg-gray-700";
   let textColor = "text-gray-300";
@@ -25,6 +73,50 @@ function RecommendationBadge({ recommendation }: { recommendation: string }) {
   );
 }
 
+function getRsiColor(val: number | null | undefined): string {
+  if (val == null) return "text-gray-400";
+  if (val >= 70) return "text-red-400";
+  if (val <= 30) return "text-green-400";
+  return "text-white";
+}
+
+function getRsiLabel(val: number | null | undefined): string {
+  if (val == null) return "";
+  if (val >= 70) return "과매수";
+  if (val <= 30) return "과매도";
+  return "중립";
+}
+
+function getTrendBadge(trend: string | null | undefined) {
+  if (!trend) return null;
+  const lower = trend.toLowerCase();
+  if (lower === "uptrend" || lower === "up") {
+    return <span className="inline-flex items-center rounded-md bg-green-500/15 px-2 py-0.5 text-xs font-semibold text-green-400">상승 추세</span>;
+  }
+  if (lower === "downtrend" || lower === "down") {
+    return <span className="inline-flex items-center rounded-md bg-red-500/15 px-2 py-0.5 text-xs font-semibold text-red-400">하락 추세</span>;
+  }
+  return <span className="inline-flex items-center rounded-md bg-yellow-500/15 px-2 py-0.5 text-xs font-semibold text-yellow-400">횡보</span>;
+}
+
+function getMacdSignal(macd: number | null | undefined, signal: number | null | undefined): { text: string; color: string } {
+  if (macd == null || signal == null) return { text: "-", color: "text-gray-400" };
+  if (macd > signal) return { text: "매수 신호", color: "text-green-400" };
+  if (macd < signal) return { text: "매도 신호", color: "text-red-400" };
+  return { text: "중립", color: "text-gray-400" };
+}
+
+function SkeletonBlock({ className }: { className?: string }) {
+  return <div className={`animate-pulse rounded-lg border border-gray-800 bg-gray-900 ${className ?? "h-28"}`} />;
+}
+
+interface DetailResponse {
+  stock: Stock | null;
+  prices: DailyPrice[] | null;
+  analysis: AnalysisReport | null;
+  news: NewsArticle[] | null;
+}
+
 export default function StockDetailPage() {
   const params = useParams();
   const ticker = params.ticker as string;
@@ -32,74 +124,311 @@ export default function StockDetailPage() {
   const [stock, setStock] = useState<Stock | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisReport | null>(null);
   const [latestPrice, setLatestPrice] = useState<DailyPrice | null>(null);
+  const [technical, setTechnical] = useState<TechnicalIndicators | null>(null);
+  const [news, setNews] = useState<NewsArticle[]>([]);
   const [loading, setLoading] = useState(true);
+  const [techLoading, setTechLoading] = useState(true);
 
   useEffect(() => {
     if (!ticker) return;
-    Promise.all([
-      fetchAPI<{ stocks: Stock[] }>(`/api/v1/stocks?limit=1&offset=0`).then(r => (r?.stocks ?? []).find(s => s.ticker === ticker) || null).catch(() => null),
-      fetchAPI<{ ticker: string; analysis: AnalysisReport | null }>(`/api/v1/stocks/${ticker}/analysis`).then(r => r?.analysis ?? null).catch(() => null),
-      fetchAPI<{ prices: DailyPrice[] }>(`/api/v1/stocks/${ticker}/prices?limit=1`).then(r => (r?.prices ?? [])[0] || null).catch(() => null),
-    ]).then(([s, a, p]) => {
-      setStock(s);
-      setAnalysis(a);
-      setLatestPrice(p);
-      setLoading(false);
-    });
+
+    fetchAPI<DetailResponse>(`/api/v1/stocks/${ticker}/detail`)
+      .then((data) => {
+        setStock(data?.stock ?? null);
+        setAnalysis(data?.analysis ?? null);
+        const prices = Array.isArray(data?.prices) ? data.prices : [];
+        setLatestPrice(prices.length > 0 ? prices[0] : null);
+        setNews(Array.isArray(data?.news) ? data.news.slice(0, 10) : []);
+      })
+      .catch(() => {
+        // detail API 실패 시 개별 API fallback
+        Promise.all([
+          fetchAPI<{ stocks: Stock[] }>(`/api/v1/stocks?limit=1&offset=0`)
+            .then((r) => (Array.isArray(r?.stocks) ? r.stocks : []).find((s) => s.ticker === ticker) ?? null)
+            .catch(() => null),
+          fetchAPI<{ ticker: string; analysis: AnalysisReport | null }>(`/api/v1/stocks/${ticker}/analysis`)
+            .then((r) => r?.analysis ?? null)
+            .catch(() => null),
+          fetchAPI<{ prices: DailyPrice[] }>(`/api/v1/stocks/${ticker}/prices?limit=1`)
+            .then((r) => (Array.isArray(r?.prices) ? r.prices : [])[0] ?? null)
+            .catch(() => null),
+        ]).then(([s, a, p]) => {
+          setStock(s);
+          setAnalysis(a);
+          setLatestPrice(p);
+        });
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+
+    // 기술적 지표 별도 호출
+    fetchAPI<{ ticker: string; indicators: TechnicalIndicators }>(`/api/v1/stocks/${ticker}/technical`)
+      .then((data) => {
+        setTechnical(data?.indicators ?? null);
+      })
+      .catch(() => {
+        setTechnical(null);
+      })
+      .finally(() => {
+        setTechLoading(false);
+      });
   }, [ticker]);
 
   if (loading) {
-    return <div className="text-sm text-gray-400">로딩 중...</div>;
+    return (
+      <div className="space-y-6">
+        <SkeletonBlock className="h-20" />
+        <SkeletonBlock className="h-[400px]" />
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <SkeletonBlock key={i} className="h-28" />
+          ))}
+        </div>
+      </div>
+    );
   }
+
+  const changePct = latestPrice
+    ? latestPrice.open > 0
+      ? ((latestPrice.close - latestPrice.open) / latestPrice.open) * 100
+      : null
+    : null;
+
+  const macdSignal = getMacdSignal(technical?.macd, technical?.macd_signal);
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      {/* 헤더: 종목명 + 티커 + 현재가 + 전일비 + 거래량 */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">{stock?.name ?? ticker}</h1>
             <span className="rounded bg-gray-800 px-2 py-0.5 font-mono text-sm text-gray-400">{ticker}</span>
+            {analysis?.recommendation && <RecommendationBadge recommendation={analysis.recommendation} />}
           </div>
           {stock && (
-            <p className="mt-1 text-sm text-gray-400">{stock.market} {stock.sector ? `/ ${stock.sector}` : ""}</p>
+            <p className="mt-1 text-sm text-gray-400">{stock.market}{stock.sector ? ` / ${stock.sector}` : ""}</p>
           )}
         </div>
-        {latestPrice && (
-          <div className="text-right">
-            <p className="text-3xl font-semibold tabular-nums">{latestPrice.close.toLocaleString("ko-KR")}</p>
-            <p className="text-xs text-gray-500">{latestPrice.trade_date} 종가</p>
-          </div>
-        )}
+        <div className="text-right">
+          {latestPrice ? (
+            <>
+              <p className="text-3xl font-semibold tabular-nums">
+                {formatNumber(latestPrice.close)}
+              </p>
+              <div className="flex items-center justify-end gap-3 mt-1">
+                <span className={`text-sm font-medium tabular-nums ${changePctColor(changePct)}`}>
+                  {formatChangePct(changePct)}
+                </span>
+                <span className="text-xs text-gray-500">
+                  거래량 {formatNumber(latestPrice.volume)}
+                </span>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">{latestPrice.trade_date} 종가</p>
+            </>
+          ) : (
+            <p className="text-sm text-gray-500">가격 데이터 없음</p>
+          )}
+        </div>
       </div>
 
+      {/* 차트 영역 */}
       <div className="rounded-lg border border-gray-800 bg-[#111111] p-6">
         <p className="text-sm font-medium text-gray-400 mb-4">가격 차트</p>
         <StockChartWrapper ticker={ticker} />
       </div>
 
+      {/* 기술적 지표 카드 (2x3 그리드) */}
+      <div>
+        <h2 className="text-lg font-semibold mb-4">기술적 지표</h2>
+        {techLoading ? (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <SkeletonBlock key={i} className="h-28" />
+            ))}
+          </div>
+        ) : technical ? (
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+            {/* RSI */}
+            <div className="rounded-lg border border-gray-800 bg-[#111111] p-4">
+              <p className="text-xs font-medium text-gray-400 mb-2">RSI (14)</p>
+              <div className="flex items-end gap-2">
+                <span className={`text-2xl font-semibold tabular-nums ${getRsiColor(technical.rsi_14)}`}>
+                  {technical.rsi_14 != null ? technical.rsi_14.toFixed(1) : "-"}
+                </span>
+                {technical.rsi_14 != null && (
+                  <span className={`text-xs font-medium mb-1 ${getRsiColor(technical.rsi_14)}`}>
+                    {getRsiLabel(technical.rsi_14)}
+                  </span>
+                )}
+              </div>
+              {/* RSI 게이지 바 */}
+              {technical.rsi_14 != null && (
+                <div className="mt-3 relative">
+                  <div className="h-2 rounded-full bg-gray-700 overflow-hidden flex">
+                    <div className="w-[30%] bg-green-500/30" />
+                    <div className="w-[40%] bg-gray-600/30" />
+                    <div className="w-[30%] bg-red-500/30" />
+                  </div>
+                  <div
+                    className="absolute top-0 h-2 w-1 bg-white rounded"
+                    style={{ left: `${Math.min(Math.max(technical.rsi_14, 0), 100)}%` }}
+                  />
+                  <div className="flex justify-between mt-1 text-[10px] text-gray-500">
+                    <span>0</span>
+                    <span>30</span>
+                    <span>70</span>
+                    <span>100</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* MACD */}
+            <div className="rounded-lg border border-gray-800 bg-[#111111] p-4">
+              <p className="text-xs font-medium text-gray-400 mb-2">MACD</p>
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">MACD</span>
+                  <span className="tabular-nums text-white">
+                    {technical.macd != null ? technical.macd.toFixed(2) : "-"}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Signal</span>
+                  <span className="tabular-nums text-white">
+                    {technical.macd_signal != null ? technical.macd_signal.toFixed(2) : "-"}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">Hist</span>
+                  <span className="tabular-nums text-white">
+                    {technical.macd_hist != null ? technical.macd_hist.toFixed(2) : "-"}
+                  </span>
+                </div>
+              </div>
+              <p className={`mt-2 text-xs font-medium ${macdSignal.color}`}>
+                {macdSignal.text}
+              </p>
+            </div>
+
+            {/* 볼린저밴드 */}
+            <div className="rounded-lg border border-gray-800 bg-[#111111] p-4">
+              <p className="text-xs font-medium text-gray-400 mb-2">볼린저 밴드</p>
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">상단</span>
+                  <span className="tabular-nums text-white">
+                    {formatNumber(technical.bb_upper, { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">중단</span>
+                  <span className="tabular-nums text-white">
+                    {formatNumber(technical.bb_middle, { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">하단</span>
+                  <span className="tabular-nums text-white">
+                    {formatNumber(technical.bb_lower, { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+              </div>
+              {technical.price_position && (
+                <p className="mt-2 text-xs text-gray-400">
+                  위치: <span className="text-white font-medium">{technical.price_position}</span>
+                </p>
+              )}
+            </div>
+
+            {/* SMA 이평선 */}
+            <div className="rounded-lg border border-gray-800 bg-[#111111] p-4">
+              <p className="text-xs font-medium text-gray-400 mb-2">이동평균선</p>
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">SMA 5</span>
+                  <span className="tabular-nums text-white">
+                    {formatNumber(technical.sma_5, { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">SMA 20</span>
+                  <span className="tabular-nums text-white">
+                    {formatNumber(technical.sma_20, { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500">SMA 60</span>
+                  <span className="tabular-nums text-white">
+                    {formatNumber(technical.sma_60, { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* 추세 */}
+            <div className="rounded-lg border border-gray-800 bg-[#111111] p-4">
+              <p className="text-xs font-medium text-gray-400 mb-2">추세</p>
+              <div className="mt-2">
+                {getTrendBadge(technical.trend)}
+              </div>
+              {technical.price_position && (
+                <p className="mt-3 text-xs text-gray-400">
+                  가격 위치: <span className="text-white">{technical.price_position}</span>
+                </p>
+              )}
+            </div>
+
+            {/* ATR 변동성 */}
+            <div className="rounded-lg border border-gray-800 bg-[#111111] p-4">
+              <p className="text-xs font-medium text-gray-400 mb-2">ATR (14)</p>
+              <p className="text-2xl font-semibold tabular-nums text-white">
+                {technical.atr_14 != null ? formatNumber(technical.atr_14, { maximumFractionDigits: 0 }) : "-"}
+              </p>
+              <p className="mt-1 text-xs text-gray-500">일일 변동성 (평균 진폭)</p>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-gray-800 bg-[#111111] p-6">
+            <p className="text-sm text-gray-400">기술적 지표 데이터가 없습니다.</p>
+            <p className="mt-1 text-xs text-gray-500">가격 데이터가 충분히 수집되면 자동으로 계산됩니다.</p>
+          </div>
+        )}
+      </div>
+
+      {/* AI 분석 리포트 */}
       {analysis ? (
         <div className="space-y-6">
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold">AI 분석 리포트</h2>
-            <RecommendationBadge recommendation={analysis.recommendation} />
-          </div>
+          <h2 className="text-lg font-semibold">AI 분석 리포트</h2>
 
           <div className="rounded-lg border border-gray-800 bg-[#111111] p-5">
             <p className="text-sm leading-relaxed text-gray-300">{analysis.summary}</p>
             <div className="mt-4 flex flex-wrap gap-4 text-sm">
               <div>
-                <span className="text-gray-500">신뢰도</span>{" "}
-                <span className="font-medium tabular-nums">{(analysis.confidence * 100).toFixed(0)}%</span>
+                <span className="text-gray-500">신뢰도</span>
+                <div className="mt-1 flex items-center gap-2">
+                  <div className="h-2 w-24 rounded-full bg-gray-700 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-green-500"
+                      style={{ width: `${(analysis.confidence ?? 0) * 100}%` }}
+                    />
+                  </div>
+                  <span className="font-medium tabular-nums">
+                    {analysis.confidence != null ? `${(analysis.confidence * 100).toFixed(0)}%` : "-"}
+                  </span>
+                </div>
               </div>
-              {analysis.target_price && (
+              {analysis.target_price != null && (
                 <div>
                   <span className="text-gray-500">목표가</span>{" "}
-                  <span className="font-medium tabular-nums">{analysis.target_price.toLocaleString("ko-KR")}</span>
+                  <span className="font-medium tabular-nums">{formatNumber(analysis.target_price)}</span>
                 </div>
               )}
               <div>
                 <span className="text-gray-500">분석일</span>{" "}
-                <span className="font-medium">{analysis.analysis_date}</span>
+                <span className="font-medium">{analysis.analysis_date ?? "-"}</span>
               </div>
             </div>
           </div>
@@ -139,6 +468,61 @@ export default function StockDetailPage() {
           <p className="mt-1 text-xs text-gray-500">16:30 스케줄러가 실행되면 자동으로 생성됩니다.</p>
         </div>
       )}
+
+      {/* 관련 뉴스 */}
+      <div>
+        <h2 className="text-lg font-semibold mb-4">관련 뉴스</h2>
+        {news.length > 0 ? (
+          <div className="space-y-2">
+            {news.map((article, idx) => (
+              <div
+                key={idx}
+                className="rounded-lg border border-gray-800 bg-[#111111] p-4 hover:border-gray-700 transition-colors"
+              >
+                <div className="flex items-start gap-3">
+                  <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${sentimentDotColor(article.sentiment_label)}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-white truncate">
+                      {article.url ? (
+                        <a
+                          href={article.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hover:text-green-400 transition-colors"
+                        >
+                          {article.title ?? "제목 없음"}
+                        </a>
+                      ) : (
+                        article.title ?? "제목 없음"
+                      )}
+                    </p>
+                    <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
+                      <span className="font-medium text-gray-400">{article.source ?? "-"}</span>
+                      <span>|</span>
+                      <span>{relativeTime(article.published_at)}</span>
+                      {article.sentiment_score != null && (
+                        <>
+                          <span>|</span>
+                          <span className={`font-medium ${
+                            article.sentiment_score > 0 ? "text-emerald-400" :
+                            article.sentiment_score < 0 ? "text-rose-400" : "text-gray-400"
+                          }`}>
+                            {article.sentiment_score >= 0 ? "+" : ""}{article.sentiment_score.toFixed(2)}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-gray-800 bg-[#111111] p-6">
+            <p className="text-sm text-gray-400">관련 뉴스가 없습니다.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

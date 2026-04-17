@@ -72,3 +72,40 @@ export interface HealthStatus {
   status: string;
   scheduler_running: boolean;
 }
+
+export interface NewsArticle {
+  title: string;
+  source: string;
+  url: string | null;
+  published_at: string;
+  sentiment_score: number | null;
+  sentiment_label: string | null;
+  stock_ticker: string | null;
+  stock_name: string | null;
+}
+
+export interface TechnicalIndicators {
+  rsi_14: number | null;
+  macd: number | null;
+  macd_signal: number | null;
+  macd_hist: number | null;
+  sma_5: number | null;
+  sma_20: number | null;
+  sma_60: number | null;
+  bb_upper: number | null;
+  bb_middle: number | null;
+  bb_lower: number | null;
+  atr_14: number | null;
+  price_position: string | null;
+  trend: string | null;
+}
+
+export interface WatchlistItem {
+  ticker: string;
+  name: string;
+  close: number | null;
+  change_pct: number | null;
+  volume: number | null;
+  recommendation: string | null;
+  analysis_date: string | null;
+}
