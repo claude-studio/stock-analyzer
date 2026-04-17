@@ -56,7 +56,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-lg border border-gray-800 bg-[#111111] p-5">
           <p className="text-sm font-medium text-gray-400">KOSPI</p>
-          {market?.kospi ? (
+          {market?.kospi?.close ? (
             <div className="mt-2">
               <p className="text-2xl font-semibold tabular-nums">
                 {market.kospi.close.toLocaleString("ko-KR", { minimumFractionDigits: 2 })}
@@ -72,7 +72,7 @@ export default function DashboardPage() {
 
         <div className="rounded-lg border border-gray-800 bg-[#111111] p-5">
           <p className="text-sm font-medium text-gray-400">KOSDAQ</p>
-          {market?.kosdaq ? (
+          {market?.kosdaq?.close ? (
             <div className="mt-2">
               <p className="text-2xl font-semibold tabular-nums">
                 {market.kosdaq.close.toLocaleString("ko-KR", { minimumFractionDigits: 2 })}
