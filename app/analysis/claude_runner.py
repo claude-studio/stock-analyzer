@@ -20,21 +20,48 @@ class ClaudeRunner:
         prompt: str,
         output_format: str = "json",
         max_turns: int = 3,
+        max_retries: int = 3,
     ) -> dict | str:
-        """Claude CLI를 실행하고 결과를 반환한다.
+        """Claude CLI를 실행하고 결과를 반환한다 (지수 백오프 재시도 포함).
 
         Args:
             prompt: Claude에 전달할 프롬프트
             output_format: 출력 포맷 (json 또는 text)
             max_turns: 최대 턴 수
+            max_retries: 최대 재시도 횟수
 
         Returns:
             output_format이 json이면 dict, 아니면 str
 
         Raises:
-            TimeoutError: 타임아웃 초과 시
-            RuntimeError: 프로세스 실행 실패 시
+            TimeoutError: 모든 재시도 후에도 타임아웃 초과 시
+            RuntimeError: 모든 재시도 후에도 프로세스 실행 실패 시
         """
+        last_error: TimeoutError | RuntimeError | None = None
+        for attempt in range(max_retries):
+            try:
+                return await self._execute(prompt, output_format, max_turns)
+            except (TimeoutError, RuntimeError) as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    delay = min(2 ** attempt * 5, 30)  # 5s, 10s, 20s (max 30s)
+                    logger.warning(
+                        "claude_retry",
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        delay=delay,
+                        error=str(e),
+                    )
+                    await asyncio.sleep(delay)
+        raise last_error  # type: ignore[misc]
+
+    async def _execute(
+        self,
+        prompt: str,
+        output_format: str,
+        max_turns: int,
+    ) -> dict | str:
+        """Claude CLI 단일 실행."""
         args = [
             self.claude_path,
             "-p",
