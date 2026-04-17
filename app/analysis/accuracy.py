@@ -14,6 +14,7 @@ logger = structlog.get_logger(__name__)
 _BUY_RECOMMENDATIONS = {"buy", "strong_buy"}
 _SELL_RECOMMENDATIONS = {"sell", "strong_sell"}
 _HOLD_THRESHOLD = Decimal("0.03")
+_TRADE_COST = Decimal("0.005")  # 편도 0.5% 거래비용 가정 (매수 0.015% + 매도 0.25% + 슬리피지 0.1%)
 
 
 def _judge_hit(recommendation: str, actual_return: Decimal | None) -> bool | None:
@@ -21,9 +22,9 @@ def _judge_hit(recommendation: str, actual_return: Decimal | None) -> bool | Non
     if actual_return is None:
         return None
     if recommendation in _BUY_RECOMMENDATIONS:
-        return actual_return > 0
+        return actual_return > _TRADE_COST
     if recommendation in _SELL_RECOMMENDATIONS:
-        return actual_return < 0
+        return actual_return < -_TRADE_COST
     if recommendation == "hold":
         return abs(actual_return) < _HOLD_THRESHOLD
     return None
