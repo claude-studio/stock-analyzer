@@ -1,13 +1,8 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { fetchAPI } from "@/lib/api";
 import type { AccuracyStats } from "@/lib/api";
-
-async function getAccuracy() {
-  try {
-    return await fetchAPI<AccuracyStats>("/api/v1/accuracy");
-  } catch {
-    return null;
-  }
-}
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -19,8 +14,20 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
   );
 }
 
-export default async function AccuracyPage() {
-  const stats = await getAccuracy();
+export default function AccuracyPage() {
+  const [stats, setStats] = useState<AccuracyStats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchAPI<AccuracyStats>("/api/v1/accuracy")
+      .then(setStats)
+      .catch(() => setStats(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return <div className="text-sm text-gray-400">로딩 중...</div>;
+  }
 
   return (
     <div className="space-y-8">
