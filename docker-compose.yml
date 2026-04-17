@@ -34,6 +34,7 @@ services:
     container_name: stock-frontend
     restart: unless-stopped
     environment:
+      - HOSTNAME=0.0.0.0
       - API_URL=http://stock-api:8000
       - NEXT_PUBLIC_API_URL=
       - NEXT_PUBLIC_API_KEY=${API_KEY}
