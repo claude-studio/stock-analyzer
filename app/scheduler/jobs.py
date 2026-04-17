@@ -33,7 +33,7 @@ from app.service.db_service import (
 )
 from app.utils.alerting import notify_failure, notify_success
 from app.utils.market_calendar import is_krx_trading_day, is_nyse_trading_day
-from app.utils.telegram import send_analysis_alert, send_market_summary
+from app.utils.discord import send_analysis_alert, send_market_summary
 
 logger = structlog.get_logger(__name__)
 KST = ZoneInfo("Asia/Seoul")
@@ -415,7 +415,7 @@ async def job_claude_analysis() -> None:
                     await session.commit()
                     logger.info("claude_analysis_done", ticker=ticker)
 
-                    # M5: buy/strong_buy 종목 Telegram 알림
+                    # M5: buy/strong_buy 종목 Discord 알림
                     result_dict = analysis_result.model_dump()
                     if result_dict.get("recommendation") in ("buy", "strong_buy"):
                         try:
@@ -428,7 +428,7 @@ async def job_claude_analysis() -> None:
                                 key_factors=result_dict.get("key_factors"),
                             )
                         except Exception:
-                            logger.warning("telegram_alert_failed", ticker=ticker, exc_info=True)
+                            logger.warning("discord_alert_failed", ticker=ticker, exc_info=True)
 
         tasks = [_analyze_ticker(t) for t in settings.KR_WATCHLIST]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -600,7 +600,7 @@ async def job_market_summary() -> None:
         if isinstance(summary_text, dict):
             summary_text = str(summary_text)
 
-        # Telegram 전송
+        # Discord 전송
         await send_market_summary(str(summary_text))
 
         # Teams 알림

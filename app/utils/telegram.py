@@ -1,4 +1,9 @@
-"""Telegram Bot API 유틸리티."""
+"""Telegram Bot API 유틸리티.
+
+.. deprecated::
+    이 모듈은 더 이상 사용되지 않습니다. ``app.utils.discord`` 모듈을 사용하세요.
+    하위 호환을 위해 유지되며, 향후 제거될 수 있습니다.
+"""
 
 from datetime import datetime, timezone, timedelta
 
