@@ -18,16 +18,16 @@ class Settings(BaseSettings):
     DISCORD_WEBHOOK_URL: str = ""
     API_KEY: str = ""
     MODE: str = "PRD"
-    KR_WATCHLIST: list[str] = ["005930", "000660", "035420"]
-    US_WATCHLIST: list[str] = ["SPY", "QQQ", "AAPL"]
+    KR_WATCHLIST_RAW: str = "005930,000660,035420"
+    US_WATCHLIST_RAW: str = "SPY,QQQ,AAPL"
 
-    @field_validator("KR_WATCHLIST", "US_WATCHLIST", mode="before")
-    @classmethod
-    def parse_comma_separated(cls, v: str | list[str]) -> list[str]:
-        """쉼표 구분 문자열을 리스트로 파싱."""
-        if isinstance(v, str):
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return v
+    @property
+    def KR_WATCHLIST(self) -> list[str]:
+        return [s.strip() for s in self.KR_WATCHLIST_RAW.split(",") if s.strip()]
+
+    @property
+    def US_WATCHLIST(self) -> list[str]:
+        return [s.strip() for s in self.US_WATCHLIST_RAW.split(",") if s.strip()]
 
 
 settings = Settings()
