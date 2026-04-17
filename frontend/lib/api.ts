@@ -1,11 +1,20 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const SERVER_API_URL = process.env.API_URL || "http://stock-api:8000";
+const CLIENT_API_URL = process.env.NEXT_PUBLIC_API_URL || "";
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
+function getBaseUrl(): string {
+  if (typeof window === "undefined") {
+    return SERVER_API_URL;
+  }
+  return CLIENT_API_URL;
+}
 
 export async function fetchAPI<T>(
   path: string,
   options?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const base = getBaseUrl();
+  const res = await fetch(`${base}${path}`, {
     ...options,
     headers: {
       "X-API-Key": API_KEY,
