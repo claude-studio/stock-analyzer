@@ -34,7 +34,7 @@ services:
     container_name: stock-frontend
     restart: unless-stopped
     environment:
-      - NEXT_PUBLIC_API_URL=http://stock-api:8000
+      - NEXT_PUBLIC_API_URL=https://stock.brian-dev.cloud
       - NEXT_PUBLIC_API_KEY=${API_KEY}
     networks:
       - stock_net
