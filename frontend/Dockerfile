@@ -4,7 +4,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+RUN npx next build --no-turbopack
 
 FROM node:22-alpine AS runner
 WORKDIR /app
