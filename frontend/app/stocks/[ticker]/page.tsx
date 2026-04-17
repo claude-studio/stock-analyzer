@@ -1,11 +1,6 @@
-import dynamic from "next/dynamic";
 import { fetchAPI } from "@/lib/api";
 import type { Stock, AnalysisReport, DailyPrice } from "@/lib/api";
-
-const StockChart = dynamic(
-  () => import("@/components/charts/StockChart"),
-  { ssr: false },
-);
+import StockChartWrapper from "@/components/charts/StockChartWrapper";
 
 interface PageProps {
   params: Promise<{ ticker: string }>;
@@ -101,7 +96,7 @@ export default async function StockDetailPage({ params }: PageProps) {
       {/* 차트 영역 */}
       <div className="rounded-lg border border-gray-800 bg-[#111111] p-6">
         <p className="text-sm font-medium text-gray-400 mb-4">가격 차트</p>
-        <StockChart ticker={ticker} />
+        <StockChartWrapper ticker={ticker} />
       </div>
 
       {/* 분석 리포트 */}
