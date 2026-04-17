@@ -38,12 +38,13 @@ export default function StockChart({ ticker }: StockChartProps) {
       setError(null);
 
       try {
-        const prices = await fetchAPI<DailyPrice[]>(
+        const res = await fetchAPI<{ prices: DailyPrice[] } | DailyPrice[]>(
           `/api/v1/stocks/${ticker}/prices?limit=120`,
         );
 
         if (cancelled) return;
 
+        const prices = Array.isArray(res) ? res : res.prices ?? [];
         const sorted = [...prices].sort(
           (a, b) => a.trade_date.localeCompare(b.trade_date),
         );

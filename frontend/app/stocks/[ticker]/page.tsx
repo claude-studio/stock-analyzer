@@ -37,9 +37,9 @@ export default function StockDetailPage() {
   useEffect(() => {
     if (!ticker) return;
     Promise.all([
-      fetchAPI<{ stocks: Stock[] }>(`/api/v1/stocks?limit=1&offset=0`).then(r => r.stocks.find(s => s.ticker === ticker) || null).catch(() => null),
-      fetchAPI<{ ticker: string; analysis: AnalysisReport | null }>(`/api/v1/stocks/${ticker}/analysis`).then(r => r.analysis).catch(() => null),
-      fetchAPI<{ prices: DailyPrice[] }>(`/api/v1/stocks/${ticker}/prices?limit=1`).then(r => r.prices[0] || null).catch(() => null),
+      fetchAPI<{ stocks: Stock[] }>(`/api/v1/stocks?limit=1&offset=0`).then(r => (r?.stocks ?? []).find(s => s.ticker === ticker) || null).catch(() => null),
+      fetchAPI<{ ticker: string; analysis: AnalysisReport | null }>(`/api/v1/stocks/${ticker}/analysis`).then(r => r?.analysis ?? null).catch(() => null),
+      fetchAPI<{ prices: DailyPrice[] }>(`/api/v1/stocks/${ticker}/prices?limit=1`).then(r => (r?.prices ?? [])[0] || null).catch(() => null),
     ]).then(([s, a, p]) => {
       setStock(s);
       setAnalysis(a);
@@ -119,7 +119,7 @@ export default function StockDetailPage() {
             )}
           </div>
 
-          {analysis.key_factors && analysis.key_factors.length > 0 && (
+          {Array.isArray(analysis.key_factors) && analysis.key_factors.length > 0 && (
             <div className="rounded-lg border border-gray-800 bg-[#111111] p-5">
               <p className="text-sm font-medium text-gray-400 mb-3">핵심 요인</p>
               <ul className="space-y-2">

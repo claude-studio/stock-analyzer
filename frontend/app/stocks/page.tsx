@@ -23,8 +23,8 @@ export default function StocksPage() {
           },
         });
         if (!res.ok) throw new Error(`${res.status}`);
-        const data: Stock[] = await res.json();
-        setStocks(data);
+        const data = await res.json();
+        setStocks(Array.isArray(data) ? data : data.stocks ?? []);
       } catch (err) {
         setError(err instanceof Error ? err.message : "데이터 로딩 실패");
       } finally {
