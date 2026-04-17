@@ -5,7 +5,10 @@ echo "=== Stock Analyzer - OCI ARM Setup ==="
 
 # 1. PostgreSQL: stock_analysis DB + 유저 생성
 echo "[1/4] PostgreSQL 설정..."
-docker exec boj-postgres psql -U boj -d bojmemorial -c "
+
+# boj는 POSTGRES_USER이므로 superuser 권한 보유
+# 기본 DB(boj)에 접속하여 role/DB 생성
+docker exec boj-postgres psql -U boj -c "
 DO \$\$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'stock') THEN
@@ -15,10 +18,18 @@ END
 \$\$;
 " 2>/dev/null
 
-docker exec boj-postgres psql -U boj -d bojmemorial -c "
+docker exec boj-postgres psql -U boj -c "
 SELECT 'CREATE DATABASE stock_analysis OWNER stock'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'stock_analysis')
 \gexec
+" 2>/dev/null
+
+# stock 유저에게 stock_analysis DB 전체 권한 부여
+docker exec boj-postgres psql -U boj -d stock_analysis -c "
+GRANT ALL PRIVILEGES ON DATABASE stock_analysis TO stock;
+GRANT ALL PRIVILEGES ON SCHEMA public TO stock;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO stock;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO stock;
 " 2>/dev/null
 
 echo "  DB stock_analysis 준비 완료"
