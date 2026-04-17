@@ -156,7 +156,7 @@ async def bulk_insert_daily_prices(
 
     stmt = pg_insert(DailyPrice).values(rows)
     stmt = stmt.on_conflict_do_update(
-        constraint="ix_daily_prices_stock_date",
+        index_elements=["stock_id", "trade_date"],
         set_={
             "open": stmt.excluded.open,
             "high": stmt.excluded.high,
