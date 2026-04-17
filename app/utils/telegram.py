@@ -12,6 +12,7 @@ logger = structlog.get_logger(__name__)
 TELEGRAM_API = "https://api.telegram.org/bot{token}/sendMessage"
 TELEGRAM_MAX_LENGTH = 4096
 KST = timezone(timedelta(hours=9))
+DISCLAIMER = "\n\n<i>이 분석은 정보 제공 목적이며 투자 권유가 아닙니다.</i>"
 
 
 async def send_telegram(message: str, parse_mode: str = "HTML") -> bool:
@@ -64,7 +65,7 @@ async def send_analysis_alert(
         for factor in key_factors:
             lines.append(f"\u2022 {factor}")
 
-    return await send_telegram("\n".join(lines))
+    return await send_telegram("\n".join(lines) + DISCLAIMER)
 
 
 async def send_market_summary(summary: str) -> bool:
@@ -75,5 +76,6 @@ async def send_market_summary(summary: str) -> bool:
         f"<i>{today}</i>\n"
         f"\n"
         f"{summary}"
+        f"{DISCLAIMER}"
     )
     return await send_telegram(text)

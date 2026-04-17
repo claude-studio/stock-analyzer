@@ -37,6 +37,7 @@ from app.utils.telegram import send_analysis_alert, send_market_summary
 
 logger = structlog.get_logger(__name__)
 KST = ZoneInfo("Asia/Seoul")
+DISCLAIMER = "이 분석은 정보 제공 목적이며 투자 권유가 아닙니다. 투자 의사결정의 최종 책임은 사용자에게 있습니다."
 
 
 def _format_tech_for_prompt(indicators: dict) -> str:
@@ -336,6 +337,14 @@ async def job_claude_analysis() -> None:
 
         market_context = await _get_market_context()
 
+        # B4: DART 재무 데이터 수집
+        fundamentals_map: dict[str, dict] = {}
+        try:
+            fundamentals_map = await collect_fundamentals_for_watchlist(settings.KR_WATCHLIST)
+            logger.info("fundamentals_collected", count=len(fundamentals_map))
+        except Exception:
+            logger.warning("fundamentals_collect_failed", exc_info=True)
+
         async def _analyze_ticker(ticker: str) -> None:
             async with semaphore:
                 async with async_session_factory() as session:
@@ -375,11 +384,16 @@ async def job_claude_analysis() -> None:
                             logger.warning("tech_indicators_failed", ticker=ticker, exc_info=True)
 
                     tech_text = _format_tech_for_prompt(tech_indicators) if tech_indicators else ""
-                    full_context = (
-                        f"{market_context}\n\n## 기술적 지표\n{tech_text}"
-                        if tech_text
-                        else market_context
-                    )
+
+                    # B4: DART 재무 지표 합산
+                    fund = fundamentals_map.get(ticker, {})
+                    if fund:
+                        fund_text = "\n".join(f"- {k}: {v}" for k, v in fund.items() if v is not None)
+                        full_context = f"{market_context}\n\n## 기술적 지표\n{tech_text}\n\n## 재무 지표\n{fund_text}"
+                    elif tech_text:
+                        full_context = f"{market_context}\n\n## 기술적 지표\n{tech_text}"
+                    else:
+                        full_context = market_context
 
                     analysis_result = await run_stock_analysis(
                         runner=runner,
@@ -428,7 +442,18 @@ async def job_claude_analysis() -> None:
             else:
                 success_count += 1
 
-        status = "failure" if success_count == 0 and fail_count > 0 else "success"
+        total = len(settings.KR_WATCHLIST)
+        if success_count == 0 and fail_count > 0:
+            status = "failure"
+        elif fail_count > 0 and success_count < total * 0.5:
+            status = "partial_failure"
+            await notify_failure(
+                "claude_analysis",
+                RuntimeError(f"{fail_count}/{total} 종목 분석 실패"),
+                started_at,
+            )
+        else:
+            status = "success"
 
         async with async_session_factory() as session:
             completed_at = datetime.now(tz=KST)
@@ -451,6 +476,7 @@ async def job_claude_analysis() -> None:
             elapsed_seconds=(completed_at - started_at).total_seconds(),
             success_count=success_count,
             fail_count=fail_count,
+            disclaimer=DISCLAIMER,
         )
     except Exception as exc:
         logger.exception("job_failed", job="claude_analysis")
