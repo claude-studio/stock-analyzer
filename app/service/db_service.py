@@ -127,15 +127,25 @@ async def bulk_insert_daily_prices(
         if isinstance(trade_date, pd.Timestamp):
             trade_date = trade_date.date()
 
+        open_val = _to_decimal(row.get("시가", row.get("Open", 0)))
+        high_val = _to_decimal(row.get("고가", row.get("High", 0)))
+        low_val = _to_decimal(row.get("저가", row.get("Low", 0)))
+        close_val = _to_decimal(row.get("종가", row.get("Close", 0)))
+        volume_val = int(row.get("거래량", row.get("Volume", 0)))
+
+        if not _validate_ohlcv(open_val, high_val, low_val, close_val, volume_val):
+            logger.warning("invalid_ohlcv_skipped", ticker=str(ticker), date=str(trade_date))
+            continue
+
         rows.append(
             {
                 "stock_id": stock_id,
                 "trade_date": trade_date,
-                "open": _to_decimal(row.get("시가", row.get("Open", 0))),
-                "high": _to_decimal(row.get("고가", row.get("High", 0))),
-                "low": _to_decimal(row.get("저가", row.get("Low", 0))),
-                "close": _to_decimal(row.get("종가", row.get("Close", 0))),
-                "volume": int(row.get("거래량", row.get("Volume", 0))),
+                "open": open_val,
+                "high": high_val,
+                "low": low_val,
+                "close": close_val,
+                "volume": volume_val,
                 "market_cap": _to_int(row.get("시가총액")),
                 "foreign_ratio": _to_decimal(row.get("외국인비율")),
             }
@@ -177,7 +187,9 @@ async def get_daily_prices(
         query = query.where(DailyPrice.trade_date <= end_date)
     query = query.order_by(DailyPrice.trade_date.desc()).limit(limit)
     result = await session.execute(query)
-    return list(result.scalars().all())
+    prices = list(result.scalars().all())
+    prices.reverse()  # DESC -> ASC: 기술적 지표 계산에 필요한 시계열 순서
+    return prices
 
 
 # ──────────────────────────────────────────────
@@ -356,6 +368,27 @@ async def log_collection(
 # ──────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────
+
+
+def _validate_ohlcv(
+    open_val: Decimal | None,
+    high_val: Decimal | None,
+    low_val: Decimal | None,
+    close_val: Decimal | None,
+    volume: int,
+) -> bool:
+    """OHLCV 데이터 유효성 검증. False면 skip."""
+    if any(v is None or v <= 0 for v in [open_val, high_val, low_val, close_val]):
+        return False
+    if volume < 0:
+        return False
+    if high_val < low_val:
+        return False
+    if open_val > high_val or open_val < low_val:
+        return False
+    if close_val > high_val or close_val < low_val:
+        return False
+    return True
 
 
 def _to_decimal(val) -> Decimal | None:
