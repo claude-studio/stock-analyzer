@@ -1,8 +1,10 @@
 """주식 API 라우터."""
 
-from datetime import date
+import asyncio
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any
+from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -144,14 +146,108 @@ async def get_stock_analysis(ticker: str, session: DbSession) -> dict[str, Any]:
     }
 
 
+@router.get("/stocks/{ticker}/detail")
+async def get_stock_detail(ticker: str, session: DbSession) -> dict[str, Any]:
+    """종목 상세 정보 (프론트엔드 종목 페이지용 통합 API)."""
+    stock = await get_stock_by_ticker(session, ticker)
+    if not stock:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"종목을 찾을 수 없습니다: {ticker}",
+        )
+
+    prices = await get_daily_prices(session, stock.id, limit=120)
+    report = await get_latest_analysis(session, stock.id)
+    news = await get_recent_news(session, stock_id=stock.id, limit=10)
+
+    analysis_data: dict[str, Any] | None = None
+    if report:
+        analysis_data = {
+            "analysis_date": str(report.analysis_date),
+            "analysis_type": report.analysis_type,
+            "summary": report.summary,
+            "recommendation": report.recommendation,
+            "confidence": _decimal_to_float(report.confidence),
+            "target_price": _decimal_to_float(report.target_price),
+            "key_factors": report.key_factors,
+            "bull_case": report.bull_case,
+            "bear_case": report.bear_case,
+            "model_used": report.model_used,
+            "created_at": str(report.created_at) if report.created_at else None,
+        }
+
+    return {
+        "stock": {
+            "ticker": stock.ticker,
+            "name": stock.name,
+            "market": stock.market,
+            "sector": stock.sector,
+        },
+        "prices": [
+            {
+                "trade_date": str(p.trade_date),
+                "open": _decimal_to_float(p.open),
+                "high": _decimal_to_float(p.high),
+                "low": _decimal_to_float(p.low),
+                "close": _decimal_to_float(p.close),
+                "volume": p.volume,
+            }
+            for p in prices
+        ],
+        "analysis": analysis_data,
+        "news": [
+            {
+                "title": n.title,
+                "source": n.source,
+                "published_at": str(n.published_at) if n.published_at else None,
+                "sentiment_label": n.sentiment_label,
+            }
+            for n in news
+        ],
+    }
+
+
 @router.get("/market/overview")
 async def get_market_overview() -> dict[str, Any]:
-    """시장 개요를 반환한다."""
-    # TODO: 주요 지수(KOSPI, KOSDAQ, S&P500, NASDAQ) 및 환율 데이터 조회
+    """KOSPI/KOSDAQ 당일 지수를 조회한다."""
+    from pykrx import stock as pykrx_stock
+
+    KST = ZoneInfo("Asia/Seoul")
+    today_str = datetime.now(tz=KST).date().strftime("%Y%m%d")
+
+    kospi_data: dict[str, Any] = {"close": None, "change_pct": None}
+    kosdaq_data: dict[str, Any] = {"close": None, "change_pct": None}
+
+    try:
+        kospi_df, kosdaq_df = await asyncio.gather(
+            asyncio.to_thread(
+                pykrx_stock.get_index_ohlcv_by_date, today_str, today_str, "1001",
+            ),
+            asyncio.to_thread(
+                pykrx_stock.get_index_ohlcv_by_date, today_str, today_str, "2001",
+            ),
+        )
+
+        if not kospi_df.empty:
+            row = kospi_df.iloc[-1]
+            kospi_data = {
+                "close": float(row["종가"]),
+                "change_pct": float(row["등락률"]),
+            }
+
+        if not kosdaq_df.empty:
+            row = kosdaq_df.iloc[-1]
+            kosdaq_data = {
+                "close": float(row["종가"]),
+                "change_pct": float(row["등락률"]),
+            }
+    except Exception:
+        logger.warning("market_overview_fetch_failed", exc_info=True)
+
     return {
-        "indices": [],
-        "exchange_rates": [],
-        "updated_at": None,
+        "kospi": kospi_data,
+        "kosdaq": kosdaq_data,
+        "updated_at": datetime.now(tz=KST).isoformat(),
     }
 
 

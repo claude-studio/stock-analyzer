@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 
 import structlog
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.logging_config import setup_logging
@@ -35,6 +36,17 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url=docs_url,
     redoc_url=redoc_url,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "https://stock.brian-dev.cloud",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(health.router)
