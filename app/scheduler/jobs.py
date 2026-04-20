@@ -26,6 +26,7 @@ from app.service.db_service import (
     get_recent_news,
     get_stock_by_ticker,
     get_stock_id_map,
+    get_stock_name_map,
     log_collection,
     save_analysis_report,
     upsert_news_articles,
@@ -211,10 +212,7 @@ async def job_news_collect() -> None:
     try:
         articles = await collect_rss_news()
         async with async_session_factory() as session:
-            stock_id_map = await get_stock_id_map(session)
-            result = await session.execute(select(Stock.name, Stock.id))
-            name_map = {row.name: row.id for row in result}
-            full_map = {**stock_id_map, **name_map}
+            full_map = await get_stock_name_map(session)
             count = await upsert_news_articles(session, articles, stock_id_map=full_map)
 
             # M3: 감성 분석 실행

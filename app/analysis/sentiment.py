@@ -93,9 +93,16 @@ async def analyze_sentiment_batch(
                 )
                 continue
 
-            # index를 전체 기준으로 보정
+            # index를 전체 기준으로 보정 + score 정규화
             for item in parsed:
                 item["index"] = item["index"] + batch_start
+                raw_score = item.get("score", 0.0)
+                label = item.get("sentiment", "neutral")
+                if label == "negative":
+                    item["score"] = -abs(raw_score)
+                elif label == "neutral":
+                    item["score"] = 0.0
+                # positive는 양수 그대로 유지
 
             results.extend(parsed)
 

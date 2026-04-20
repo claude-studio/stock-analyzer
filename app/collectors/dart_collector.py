@@ -1,6 +1,7 @@
 """DART 전자공시 + 재무제표 수집기 (opendartreader)."""
 
 import asyncio
+import time
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -10,6 +11,9 @@ from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 KST = ZoneInfo("Asia/Seoul")
+
+_MAX_RETRIES = 3
+_RETRY_DELAYS = [2, 4, 8]
 
 # corp_code 캐시 (같은 세션 내 중복 조회 방지)
 _corp_code_cache: dict[str, str | None] = {}
@@ -135,15 +139,36 @@ def _collect_financial_summary_sync(
         reprt_code=reprt_code,
     )
 
-    try:
-        df = dart.finstate(corp_code, year, reprt_code=reprt_code)
-    except Exception as e:
-        logger.warning(
-            "dart_finstate_failed",
+    df = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            df = dart.finstate(corp_code, year, reprt_code=reprt_code)
+            break
+        except (ConnectionError, TimeoutError, OSError) as exc:
+            delay = _RETRY_DELAYS[attempt]
+            logger.warning(
+                "dart_finstate_retry",
+                corp_code=corp_code,
+                attempt=attempt + 1,
+                delay=delay,
+                error=str(exc),
+            )
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(delay)
+        except (ValueError, KeyError) as exc:
+            logger.error(
+                "dart_finstate_data_error",
+                corp_code=corp_code,
+                year=year,
+                error=str(exc),
+            )
+            return None
+    else:
+        logger.error(
+            "dart_finstate_all_retries_failed",
             corp_code=corp_code,
             year=year,
             reprt_code=reprt_code,
-            error=str(e),
         )
         return None
 

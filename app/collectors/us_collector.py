@@ -1,12 +1,16 @@
 """미국 주식 데이터 수집기 (yfinance)."""
 
 import asyncio
+import time
 
 import pandas as pd
 import structlog
 import yfinance as yf
 
 logger = structlog.get_logger(__name__)
+
+_MAX_RETRIES = 3
+_RETRY_DELAYS = [2, 4, 8]
 
 
 def _collect_us_ohlcv_sync(
@@ -20,22 +24,42 @@ def _collect_us_ohlcv_sync(
     )
     frames: list[dict] = []
     for ticker in tickers:
-        try:
-            df = yf.download(
-                tickers=ticker,
-                period=period,
-                interval="1d",
-                auto_adjust=True,
-                progress=False,
-            )
-            if df.empty:
-                continue
-            row = df.iloc[-1].to_dict()
-            row["_ticker"] = ticker
-            row["_date"] = df.index[-1].date()
-            frames.append(row)
-        except Exception:
-            logger.warning("us_ohlcv_fetch_failed", ticker=ticker)
+        for attempt in range(_MAX_RETRIES):
+            try:
+                df = yf.download(
+                    tickers=ticker,
+                    period=period,
+                    interval="1d",
+                    auto_adjust=True,
+                    progress=False,
+                )
+                if df.empty:
+                    break
+                row = df.iloc[-1].to_dict()
+                row["_ticker"] = ticker
+                row["_date"] = df.index[-1].date()
+                frames.append(row)
+                break
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                delay = _RETRY_DELAYS[attempt]
+                logger.warning(
+                    "us_ohlcv_retry",
+                    ticker=ticker,
+                    attempt=attempt + 1,
+                    delay=delay,
+                    error=str(exc),
+                )
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(delay)
+            except (ValueError, KeyError) as exc:
+                logger.error(
+                    "us_ohlcv_data_error",
+                    ticker=ticker,
+                    error=str(exc),
+                )
+                break
+        else:
+            logger.error("us_ohlcv_all_retries_failed", ticker=ticker)
 
     if not frames:
         return pd.DataFrame()

@@ -1,6 +1,7 @@
 """한국 주식 데이터 수집기 (pykrx + FinanceDataReader)."""
 
 import asyncio
+import time
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,9 @@ logger = structlog.get_logger(__name__)
 
 KST = ZoneInfo("Asia/Seoul")
 
+_MAX_RETRIES = 3
+_RETRY_DELAYS = [2, 4, 8]
+
 
 def _collect_krx_ohlcv_sync(target_date: date) -> pd.DataFrame:
     """KRX 전종목 OHLCV를 동기로 수집한다."""
@@ -24,9 +28,29 @@ def _collect_krx_ohlcv_sync(target_date: date) -> pd.DataFrame:
 
     date_str = target_date.strftime("%Y%m%d")
     logger.info("krx_ohlcv_collecting", date=date_str)
-    df = pykrx_stock.get_market_ohlcv_by_ticker(date_str, market="ALL")
-    logger.info("krx_ohlcv_collected", date=date_str, rows=len(df))
-    return df
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            df = pykrx_stock.get_market_ohlcv_by_ticker(date_str, market="ALL")
+            logger.info("krx_ohlcv_collected", date=date_str, rows=len(df))
+            return df
+        except (ConnectionError, TimeoutError, OSError) as exc:
+            delay = _RETRY_DELAYS[attempt]
+            logger.warning(
+                "krx_ohlcv_retry",
+                date=date_str,
+                attempt=attempt + 1,
+                delay=delay,
+                error=str(exc),
+            )
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(delay)
+        except (ValueError, KeyError) as exc:
+            logger.error("krx_ohlcv_data_error", date=date_str, error=str(exc))
+            return pd.DataFrame()
+
+    logger.error("krx_ohlcv_all_retries_failed", date=date_str)
+    return pd.DataFrame()
 
 
 async def collect_krx_ohlcv(target_date: date | None = None) -> pd.DataFrame:
@@ -46,9 +70,28 @@ async def collect_krx_ohlcv(target_date: date | None = None) -> pd.DataFrame:
 def _collect_stock_listing_sync() -> pd.DataFrame:
     """KRX 상장 종목 목록을 동기로 수집한다."""
     logger.info("krx_stock_listing_collecting")
-    df = fdr.StockListing("KRX")
-    logger.info("krx_stock_listing_collected", rows=len(df))
-    return df
+
+    for attempt in range(_MAX_RETRIES):
+        try:
+            df = fdr.StockListing("KRX")
+            logger.info("krx_stock_listing_collected", rows=len(df))
+            return df
+        except (ConnectionError, TimeoutError, OSError) as exc:
+            delay = _RETRY_DELAYS[attempt]
+            logger.warning(
+                "krx_stock_listing_retry",
+                attempt=attempt + 1,
+                delay=delay,
+                error=str(exc),
+            )
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(delay)
+        except (ValueError, KeyError) as exc:
+            logger.error("krx_stock_listing_data_error", error=str(exc))
+            return pd.DataFrame()
+
+    logger.error("krx_stock_listing_all_retries_failed")
+    return pd.DataFrame()
 
 
 async def collect_stock_listing() -> pd.DataFrame:

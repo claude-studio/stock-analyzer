@@ -78,6 +78,20 @@ async def get_stock_id_map(session: AsyncSession) -> dict[str, int]:
     return {row.ticker: row.id for row in result}
 
 
+async def get_stock_name_map(session: AsyncSession) -> dict[str, int]:
+    """전체 종목 {종목명: stock_id} + {ticker: stock_id} 합친 매핑 딕셔너리.
+
+    뉴스 제목에서 종목명 기반 매칭에 사용한다.
+    """
+    result = await session.execute(select(Stock.name, Stock.ticker, Stock.id))
+    merged: dict[str, int] = {}
+    for row in result:
+        merged[row.ticker] = row.id
+        if row.name:
+            merged[row.name] = row.id
+    return merged
+
+
 async def list_stocks(
     session: AsyncSession,
     market: str | None = None,
@@ -118,6 +132,22 @@ async def bulk_insert_daily_prices(
     if df.empty:
         return 0
 
+    # 직전 종가 조회 (급변동 검증용)
+    prev_close_map: dict[int, Decimal] = {}
+    stock_ids_in_df = [
+        sid for t in df.index if (sid := stock_id_map.get(str(t)))
+    ]
+    if stock_ids_in_df:
+        prev_stmt = (
+            select(DailyPrice.stock_id, DailyPrice.close)
+            .where(DailyPrice.stock_id.in_(stock_ids_in_df))
+            .order_by(DailyPrice.trade_date.desc())
+            .distinct(DailyPrice.stock_id)
+        )
+        prev_result = await session.execute(prev_stmt)
+        for row in prev_result:
+            prev_close_map[row.stock_id] = row.close
+
     rows = []
     for ticker, row in df.iterrows():
         stock_id = stock_id_map.get(str(ticker))
@@ -134,7 +164,11 @@ async def bulk_insert_daily_prices(
         close_val = _to_decimal(row.get("종가", row.get("Close", 0)))
         volume_val = int(row.get("거래량", row.get("Volume", 0)))
 
-        if not _validate_ohlcv(open_val, high_val, low_val, close_val, volume_val):
+        prev_close = prev_close_map.get(stock_id)
+        if not _validate_ohlcv(
+            open_val, high_val, low_val, close_val, volume_val,
+            prev_close=prev_close, ticker=str(ticker),
+        ):
             logger.warning("invalid_ohlcv_skipped", ticker=str(ticker), date=str(trade_date))
             continue
 
@@ -412,8 +446,14 @@ def _validate_ohlcv(
     low_val: Decimal | None,
     close_val: Decimal | None,
     volume: int,
+    prev_close: Decimal | None = None,
+    ticker: str | None = None,
 ) -> bool:
-    """OHLCV 데이터 유효성 검증. False면 skip."""
+    """OHLCV 데이터 유효성 검증. False면 skip.
+
+    prev_close가 주어지면 전일 종가 대비 +/-50% 이상 변동 시
+    액면분할 의심 warning 로그를 남긴다 (데이터 자체는 통과).
+    """
     if any(v is None or v <= 0 for v in [open_val, high_val, low_val, close_val]):
         return False
     if volume < 0:
@@ -424,6 +464,23 @@ def _validate_ohlcv(
         return False
     if close_val > high_val or close_val < low_val:
         return False
+
+    # 전일 대비 급변동 검증 (액면분할/무상증자 의심)
+    if prev_close is not None and prev_close > 0 and close_val is not None:
+        change_ratio = abs(float(close_val) - float(prev_close)) / float(prev_close)
+        if change_ratio >= 0.5:
+            logger.warning(
+                "ohlcv_extreme_change_detected",
+                ticker=ticker,
+                prev_close=float(prev_close),
+                close=float(close_val),
+                change_pct=round(change_ratio * 100, 2),
+                note="액면분할/무상증자 의심 - 수정주가 확인 필요",
+            )
+            # TODO: pykrx get_market_ohlcv_by_ticker는 수정주가 옵션 미지원.
+            # 개별 종목 get_market_ohlcv_by_date(adjusted=True)로 보정하는
+            # 별도 파이프라인 구현 필요.
+
     return True
 
 

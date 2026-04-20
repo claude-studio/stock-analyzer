@@ -17,12 +17,30 @@ class StockMatcher:
         for key, stock_id in stock_map.items():
             if len(key) >= _MIN_NAME_LENGTH:
                 self._name_map[key] = stock_id
+        # 긴 종목명 우선 매칭 (카카오뱅크 > 카카오)
+        self._sorted_names = sorted(
+            self._name_map.keys(), key=len, reverse=True
+        )
 
     def match(self, text: str) -> list[int]:
-        """텍스트에서 매칭되는 stock_id 리스트 반환 (첫 번째 매칭만)."""
+        """텍스트에서 매칭되는 stock_id 리스트 반환 (복수 매칭, 정확 매칭 우선)."""
         if not text:
             return []
-        for name, stock_id in self._name_map.items():
-            if name in text:
-                return [stock_id]
-        return []
+
+        exact: list[int] = []
+        partial: list[int] = []
+        seen_ids: set[int] = set()
+
+        for name in self._sorted_names:
+            stock_id = self._name_map[name]
+            if stock_id in seen_ids:
+                continue
+
+            if name == text:
+                exact.append(stock_id)
+                seen_ids.add(stock_id)
+            elif name in text:
+                partial.append(stock_id)
+                seen_ids.add(stock_id)
+
+        return exact + partial
