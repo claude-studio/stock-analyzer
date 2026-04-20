@@ -486,15 +486,16 @@ async def request_stock_analysis(
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(check_rate_limit)],
 )
-async def seed_relations(background_tasks: BackgroundTasks) -> dict[str, str]:
-    """관계 시드 생성 트리거."""
+async def seed_relations(background_tasks: BackgroundTasks) -> dict[str, Any]:
+    """관계 시드 생성 트리거 (DART + sector_peer + Claude 순차 실행)."""
     from app.scheduler.jobs import job_seed_relations
 
     background_tasks.add_task(job_seed_relations)
     logger.info("seed_relations_queued")
     return {
         "status": "accepted",
-        "message": "관계 시드 생성이 대기열에 추가되었습니다.",
+        "message": "관계 시드 생성이 대기열에 추가되었습니다 (sector_map -> dart -> llm 순차 실행).",
+        "sources": ["sector_map", "dart", "llm"],
     }
 
 

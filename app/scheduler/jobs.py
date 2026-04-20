@@ -31,7 +31,6 @@ from app.service.db_service import (
     log_collection,
     save_analysis_report,
     upsert_news_articles,
-    upsert_stock_relation,
     upsert_stocks,
 )
 from app.utils.alerting import notify_failure, notify_success
@@ -794,70 +793,43 @@ async def job_weekly_reflection() -> None:
         await notify_failure("weekly_reflection", exc, started_at)
 
 
-async def job_seed_relations() -> None:
-    """워치리스트 종목의 관계 시드를 생성한다 (1회성 또는 월 1회)."""
+async def job_seed_relations() -> dict[str, int]:
+    """종목 관계 시드 생성 (사실 기반 우선).
+
+    3단계 순서:
+    1. sector_peer (SQL 쿼리, 즉시)
+    2. DART affiliate (API 호출)
+    3. Claude 보충 (사실 데이터로 커버 안 되는 관계)
+
+    Returns:
+        {"sector_map": int, "dart": int, "llm": int} 각 소스별 생성 건수
+    """
+    from app.analysis.ontology import seed_from_dart, seed_from_llm, seed_sector_peers
+
     started_at = datetime.now(tz=KST)
     logger.info("job_started", job="seed_relations", started_at=started_at.isoformat())
+    counts = {"sector_map": 0, "dart": 0, "llm": 0}
     try:
-        runner = ClaudeRunner(
-            claude_path=settings.CLAUDE_PATH,
-            timeout=settings.CLAUDE_TIMEOUT,
-        )
-        from app.analysis.ontology import generate_relation_seed
-
-        seeded_count = 0
         async with async_session_factory() as session:
-            stock_name_map = await get_stock_name_map(session)
-            # ticker -> stock_id 역 매핑
-            ticker_to_id: dict[str, int] = {}
-            name_to_id: dict[str, int] = {}
-            for key, sid in stock_name_map.items():
-                if len(key) <= 10:
-                    ticker_to_id[key] = sid
-                name_to_id[key] = sid
+            # Step 1: sector_peer (SQL 쿼리, 즉시)
+            counts["sector_map"] = await seed_sector_peers(session)
+            logger.info("sector_peers_seeded", count=counts["sector_map"])
 
-            for ticker in settings.KR_WATCHLIST:
-                stock = await get_stock_by_ticker(session, ticker)
-                if not stock:
-                    logger.warning("seed_relations_stock_not_found", ticker=ticker)
-                    continue
+            # Step 2: DART affiliate (API 호출)
+            counts["dart"] = await seed_from_dart(session, settings.KR_WATCHLIST)
+            logger.info("dart_affiliates_seeded", count=counts["dart"])
 
-                try:
-                    seeds = await generate_relation_seed(
-                        runner, ticker, stock.name, stock.sector or "",
-                    )
-                    for seed in seeds:
-                        target_ticker = seed.get("target_ticker", "")
-                        target_name = seed.get("target_name", "")
-                        target_id = ticker_to_id.get(target_ticker) or name_to_id.get(target_name)
-                        if not target_id:
-                            continue
-
-                        rel_type = seed.get("type", "sector_peer")
-                        if rel_type not in (
-                            "competitor", "supplier", "customer", "affiliate", "sector_peer",
-                        ):
-                            rel_type = "sector_peer"
-
-                        await upsert_stock_relation(
-                            session,
-                            source_stock_id=stock.id,
-                            target_stock_id=target_id,
-                            relation_type=rel_type,
-                            strength=seed.get("strength"),
-                            context=seed.get("context"),
-                            source="llm",
-                        )
-                        seeded_count += 1
-
-                    logger.info("seed_relations_done", ticker=ticker, count=len(seeds))
-                except (RuntimeError, TimeoutError):
-                    logger.warning("seed_relations_failed", ticker=ticker, exc_info=True)
-
-                await asyncio.sleep(2)
+            # Step 3: Claude 보충 (경쟁사/공급망)
+            runner = ClaudeRunner(
+                claude_path=settings.CLAUDE_PATH,
+                timeout=settings.CLAUDE_TIMEOUT,
+            )
+            counts["llm"] = await seed_from_llm(session, runner, settings.KR_WATCHLIST)
+            logger.info("llm_relations_seeded", count=counts["llm"])
 
             await session.commit()
 
+        total = sum(counts.values())
         completed_at = datetime.now(tz=KST)
         async with async_session_factory() as session:
             await log_collection(
@@ -867,7 +839,7 @@ async def job_seed_relations() -> None:
                 started_at=started_at,
                 completed_at=completed_at,
                 target_date=started_at.date(),
-                stocks_count=seeded_count,
+                stocks_count=total,
             )
             await session.commit()
         logger.info(
@@ -876,8 +848,9 @@ async def job_seed_relations() -> None:
             started_at=started_at.isoformat(),
             completed_at=completed_at.isoformat(),
             elapsed_seconds=(completed_at - started_at).total_seconds(),
-            seeded_count=seeded_count,
+            counts=counts,
         )
+        return counts
     except Exception as exc:
         logger.exception("job_failed", job="seed_relations")
         async with async_session_factory() as session:
@@ -891,3 +864,4 @@ async def job_seed_relations() -> None:
             )
             await session.commit()
         await notify_failure("seed_relations", exc, started_at)
+        return counts
