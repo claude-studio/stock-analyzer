@@ -13,6 +13,7 @@ from app.scheduler.jobs import (
     job_news_collect,
     job_pre_market,
     job_us_close,
+    job_weekly_reflection,
 )
 
 logger = structlog.get_logger(__name__)
@@ -106,6 +107,15 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         day_of_week="mon-fri",
         hour=16,
         minute=10,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        job_weekly_reflection,
+        "cron",
+        id="weekly_reflection",
+        day_of_week="fri",
+        hour=18,
+        minute=0,
         replace_existing=True,
     )
     logger.info("scheduler_jobs_registered", job_count=len(scheduler.get_jobs()))

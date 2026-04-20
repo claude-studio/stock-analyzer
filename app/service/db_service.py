@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.models import (
+    AccuracyTracker,
     AnalysisReport,
     CollectionLog,
     DailyPrice,
@@ -385,6 +386,65 @@ async def save_analysis_report(
         )
     )
     return result_row.scalar_one()
+
+
+async def get_past_analyses(
+    session: AsyncSession,
+    days: int = 90,
+) -> list[dict]:
+    """최근 N일간 AnalysisReport + AccuracyTracker 조인하여 적중률 포함 결과 반환.
+
+    Returns:
+        [{"summary": str, "key_factors": list, "recommendation": str,
+          "ticker": str, "hit_rate": float}, ...]
+    """
+    from datetime import timedelta
+
+    cutoff = date.today() - timedelta(days=days)
+
+    stmt = (
+        select(
+            AnalysisReport,
+            Stock.ticker,
+            AccuracyTracker.is_hit_7d,
+        )
+        .join(Stock, AnalysisReport.stock_id == Stock.id)
+        .outerjoin(AccuracyTracker, AccuracyTracker.analysis_report_id == AnalysisReport.id)
+        .where(AnalysisReport.analysis_date >= cutoff)
+        .order_by(AnalysisReport.analysis_date.desc())
+        .limit(500)
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    reports: list[dict] = []
+    for row in rows:
+        report = row[0]
+        ticker = row[1]
+        is_hit = row[2]
+
+        hit_rate = 0.5  # 기본값 (미평가)
+        if is_hit is True:
+            hit_rate = 1.0
+        elif is_hit is False:
+            hit_rate = 0.0
+
+        key_factors = report.key_factors
+        if isinstance(key_factors, dict):
+            key_factors = list(key_factors.values()) if key_factors else []
+        elif not isinstance(key_factors, list):
+            key_factors = []
+
+        reports.append({
+            "summary": report.summary or "",
+            "key_factors": key_factors,
+            "recommendation": report.recommendation or "hold",
+            "ticker": ticker,
+            "hit_rate": hit_rate,
+        })
+
+    return reports
 
 
 async def get_latest_analysis(

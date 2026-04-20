@@ -33,6 +33,8 @@ dependencies = [
     # Utilities
     "pandas>=2.0.0",
     "beautifulsoup4>=4.12.0",
+    # BM25 memory
+    "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]

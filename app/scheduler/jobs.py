@@ -8,8 +8,9 @@ import pandas as pd
 import structlog
 from sqlalchemy import select, update
 
-from app.analysis.analyzer import run_stock_analysis
+from app.analysis.analyzer import run_multi_analysis, run_stock_analysis
 from app.analysis.accuracy import evaluate_past_analyses
+from app.analysis.reflection import run_weekly_reflection
 from app.analysis.claude_runner import ClaudeRunner
 from app.analysis.sentiment import analyze_sentiment_batch, update_news_sentiment
 from app.analysis.technical import calculate_technical_indicators
@@ -40,51 +41,6 @@ logger = structlog.get_logger(__name__)
 KST = ZoneInfo("Asia/Seoul")
 DISCLAIMER = "이 분석은 정보 제공 목적이며 투자 권유가 아닙니다. 투자 의사결정의 최종 책임은 사용자에게 있습니다."
 
-
-def _format_tech_for_prompt(indicators: dict) -> str:
-    """기술적 지표 dict를 시장 컨텍스트에 합칠 텍스트로 변환한다."""
-    lines: list[str] = []
-
-    # RSI
-    rsi = indicators.get("rsi_14")
-    if rsi is not None:
-        if rsi < 30:
-            interp = "과매도"
-        elif rsi > 70:
-            interp = "과매수"
-        else:
-            interp = "중립"
-        lines.append(f"- RSI: {rsi:.2f} ({interp})")
-
-    # MACD
-    macd_val = indicators.get("macd")
-    macd_sig = indicators.get("macd_signal")
-    if macd_val is not None and macd_sig is not None:
-        signal = "매수 신호" if macd_val > macd_sig else "매도 신호"
-        lines.append(f"- MACD: {macd_val:,.2f}, Signal: {macd_sig:,.2f} ({signal})")
-
-    # Bollinger Bands
-    bb_upper = indicators.get("bb_upper")
-    bb_lower = indicators.get("bb_lower")
-    if bb_upper is not None and bb_lower is not None:
-        pos = indicators.get("price_position", "")
-        lines.append(f"- 볼린저밴드: 상단={bb_upper:,.2f}, 하단={bb_lower:,.2f} ({pos})")
-
-    # SMA
-    sma_parts: list[str] = []
-    for key, label in [("sma_5", "5일"), ("sma_20", "20일"), ("sma_60", "60일")]:
-        val = indicators.get(key)
-        if val is not None:
-            sma_parts.append(f"{label}={val:,.2f}")
-    if sma_parts:
-        lines.append(f"- SMA: {', '.join(sma_parts)}")
-
-    # Trend
-    trend = indicators.get("trend")
-    if trend:
-        lines.append(f"- 추세: {trend}")
-
-    return "\n".join(lines)
 
 
 async def job_pre_market() -> None:
@@ -373,7 +329,7 @@ async def job_claude_analysis() -> None:
                         for n in news
                     ]
 
-                    # M1: 기술적 지표 계산 -> market_context에 합산
+                    # M1: 기술적 지표 계산
                     tech_indicators: dict = {}
                     if len(prices_df) >= 20:
                         try:
@@ -381,37 +337,49 @@ async def job_claude_analysis() -> None:
                         except (ValueError, KeyError):
                             logger.warning("tech_indicators_failed", ticker=ticker, exc_info=True)
 
-                    tech_text = _format_tech_for_prompt(tech_indicators) if tech_indicators else ""
-
-                    # B4: DART 재무 지표 합산
+                    # B4: DART 재무 지표
                     fund = fundamentals_map.get(ticker, {})
+                    fund_text = ""
                     if fund:
                         fund_text = "\n".join(f"- {k}: {v}" for k, v in fund.items() if v is not None)
-                        full_context = f"{market_context}\n\n## 기술적 지표\n{tech_text}\n\n## 재무 지표\n{fund_text}"
-                    elif tech_text:
-                        full_context = f"{market_context}\n\n## 기술적 지표\n{tech_text}"
-                    else:
-                        full_context = market_context
 
-                    analysis_result = await run_stock_analysis(
+                    # 멀티 분석가 실행 (가치/모멘텀/감성)
+                    combined_result, individual_results = await run_multi_analysis(
                         runner=runner,
                         ticker=ticker,
                         name=stock.name,
                         prices_df=prices_df,
                         news_list=news_list,
-                        market_ctx=full_context,
+                        market_ctx=market_context,
+                        indicators=tech_indicators if tech_indicators else None,
+                        fundamental_summary=fund_text,
+                        session=session,
                     )
 
+                    # 개별 분석가 결과 저장
+                    for analyst_type, analyst_result in individual_results.items():
+                        await save_analysis_report(
+                            session,
+                            stock_id=stock.id,
+                            analysis_date=today,
+                            analysis_type=analyst_type,
+                            result=analyst_result.model_dump(),
+                            model_used="claude-code-headless",
+                        )
+
+                    # 종합 결과 저장 (기존 호환)
                     await save_analysis_report(
                         session,
                         stock_id=stock.id,
                         analysis_date=today,
                         analysis_type="daily",
-                        result=analysis_result.model_dump(),
+                        result=combined_result.model_dump(),
                         model_used="claude-code-headless",
                     )
                     await session.commit()
                     logger.info("claude_analysis_done", ticker=ticker)
+
+                    analysis_result = combined_result
 
                     # M5: buy/strong_buy 종목 Discord 알림
                     result_dict = analysis_result.model_dump()
@@ -727,3 +695,49 @@ async def job_dart_collect() -> None:
             )
             await session.commit()
         await notify_failure("dart_collect", exc, started_at)
+
+
+async def job_weekly_reflection() -> None:
+    """주간 Reflection 루프 -- 적중률 분석 및 편향 식별."""
+    started_at = datetime.now(tz=KST)
+    logger.info("job_started", job="weekly_reflection", started_at=started_at.isoformat())
+    try:
+        runner = ClaudeRunner(
+            claude_path=settings.CLAUDE_PATH,
+            timeout=settings.CLAUDE_TIMEOUT,
+        )
+        async with async_session_factory() as session:
+            summary = await run_weekly_reflection(runner, session)
+            await session.commit()
+
+        completed_at = datetime.now(tz=KST)
+        async with async_session_factory() as session:
+            await log_collection(
+                session,
+                job_type="weekly_reflection",
+                status="success",
+                started_at=started_at,
+                completed_at=completed_at,
+                target_date=started_at.date(),
+            )
+            await session.commit()
+        logger.info(
+            "job_completed",
+            job="weekly_reflection",
+            started_at=started_at.isoformat(),
+            completed_at=completed_at.isoformat(),
+            elapsed_seconds=(completed_at - started_at).total_seconds(),
+        )
+    except Exception as exc:
+        logger.exception("job_failed", job="weekly_reflection")
+        async with async_session_factory() as session:
+            await log_collection(
+                session,
+                job_type="weekly_reflection",
+                status="failure",
+                started_at=started_at,
+                completed_at=datetime.now(tz=KST),
+                error_message=str(exc),
+            )
+            await session.commit()
+        await notify_failure("weekly_reflection", exc, started_at)

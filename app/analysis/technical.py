@@ -122,11 +122,51 @@ def _safe_scalar(value: Any) -> float | None:
     return float(value)
 
 
+def _calculate_obv(close: pd.Series, volume: pd.Series) -> pd.Series:
+    """On Balance Volume 계산."""
+    direction = close.diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
+    return (volume * direction).cumsum()
+
+
+def _calculate_vwap(close: pd.Series, volume: pd.Series, window: int = 20) -> pd.Series:
+    """Volume Weighted Average Price (20일 rolling)."""
+    return (close * volume).rolling(window).sum() / volume.rolling(window).sum()
+
+
+def _calculate_technical_score(indicators: dict) -> int:
+    """기술적 지표 기반 종합 점수 (0-10)."""
+    score = 5  # 기본 중립
+
+    rsi = indicators.get("rsi_14")
+    if rsi is not None:
+        if rsi < 30:
+            score += 2  # 과매도 반등 기대
+        elif rsi > 70:
+            score -= 2  # 과매수 조정 위험
+
+    macd = indicators.get("macd")
+    macd_sig = indicators.get("macd_signal")
+    if macd is not None and macd_sig is not None:
+        if macd > macd_sig:
+            score += 2  # 골든크로스
+        else:
+            score -= 1
+
+    trend = indicators.get("trend")
+    if trend == "uptrend":
+        score += 1
+    elif trend == "downtrend":
+        score -= 1
+
+    return max(0, min(10, score))
+
+
 def _calculate_with_pandas(df: pd.DataFrame) -> dict[str, float | str | None]:
     """pandas 직접 구현으로 기술적 지표를 계산한다."""
     close = df["close"]
     high = df["high"]
     low = df["low"]
+    volume = df["volume"]
 
     # SMA
     sma_5 = _calculate_sma(close, 5)
@@ -150,13 +190,23 @@ def _calculate_with_pandas(df: pd.DataFrame) -> dict[str, float | str | None]:
     # ATR
     atr_14 = _calculate_atr(high, low, close, 14)
 
+    # ROC (Rate of Change)
+    roc_5 = close.pct_change(5)
+    roc_20 = close.pct_change(20)
+
+    # OBV (On Balance Volume)
+    obv = _calculate_obv(close, volume)
+
+    # VWAP (20일 rolling)
+    vwap = _calculate_vwap(close, volume, 20)
+
     # 추세/위치 판단
     sma20_last = _safe_scalar(sma_20.iloc[-1])
     close_last = float(close.iloc[-1])
     price_position = _determine_price_position(close_last, sma20_last)
     trend = _determine_trend(sma_20)
 
-    return {
+    result = {
         "sma_5": _safe_scalar(sma_5.iloc[-1]),
         "sma_20": _safe_scalar(sma_20.iloc[-1]),
         "sma_60": _safe_scalar(sma_60.iloc[-1]),
@@ -171,9 +221,16 @@ def _calculate_with_pandas(df: pd.DataFrame) -> dict[str, float | str | None]:
         "bb_middle": _safe_scalar(bb_middle.iloc[-1]),
         "bb_lower": _safe_scalar(bb_lower.iloc[-1]),
         "atr_14": _safe_scalar(atr_14.iloc[-1]),
+        "roc_5": _safe_scalar(roc_5.iloc[-1]),
+        "roc_20": _safe_scalar(roc_20.iloc[-1]),
+        "obv": _safe_scalar(obv.iloc[-1]),
+        "vwap": _safe_scalar(vwap.iloc[-1]),
         "price_position": price_position,
         "trend": trend,
     }
+
+    result["technical_score"] = _calculate_technical_score(result)
+    return result
 
 
 def _calculate_with_pandas_ta(df: pd.DataFrame) -> dict[str, float | str | None]:
@@ -181,6 +238,7 @@ def _calculate_with_pandas_ta(df: pd.DataFrame) -> dict[str, float | str | None]
     close = df["close"]
     high = df["high"]
     low = df["low"]
+    volume = df["volume"]
 
     # SMA
     sma_5 = pandas_ta.sma(close, length=5)
@@ -210,13 +268,21 @@ def _calculate_with_pandas_ta(df: pd.DataFrame) -> dict[str, float | str | None]
     # ATR
     atr_14 = pandas_ta.atr(high, low, close, length=14)
 
+    # ROC (Rate of Change)
+    roc_5 = close.pct_change(5)
+    roc_20 = close.pct_change(20)
+
+    # OBV / VWAP (pandas-ta 없으면 직접 구현)
+    obv = _calculate_obv(close, volume)
+    vwap = _calculate_vwap(close, volume, 20)
+
     # 추세/위치 판단
     sma20_last = _safe_scalar(sma_20.iloc[-1])
     close_last = float(close.iloc[-1])
     price_position = _determine_price_position(close_last, sma20_last)
     trend = _determine_trend(sma_20)
 
-    return {
+    result = {
         "sma_5": _safe_scalar(sma_5.iloc[-1]),
         "sma_20": _safe_scalar(sma_20.iloc[-1]),
         "sma_60": _safe_scalar(sma_60.iloc[-1]),
@@ -231,9 +297,16 @@ def _calculate_with_pandas_ta(df: pd.DataFrame) -> dict[str, float | str | None]
         "bb_middle": _safe_scalar(bb_middle.iloc[-1]),
         "bb_lower": _safe_scalar(bb_lower.iloc[-1]),
         "atr_14": _safe_scalar(atr_14.iloc[-1]),
+        "roc_5": _safe_scalar(roc_5.iloc[-1]),
+        "roc_20": _safe_scalar(roc_20.iloc[-1]),
+        "obv": _safe_scalar(obv.iloc[-1]),
+        "vwap": _safe_scalar(vwap.iloc[-1]),
         "price_position": price_position,
         "trend": trend,
     }
+
+    result["technical_score"] = _calculate_technical_score(result)
+    return result
 
 
 def calculate_technical_indicators(df: pd.DataFrame) -> dict[str, float | str | None]:

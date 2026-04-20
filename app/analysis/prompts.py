@@ -17,10 +17,15 @@ SYSTEM_PROMPT: str = """\
   "recommendation": "strong_buy | buy | hold | sell | strong_sell",
   "confidence": 0.0-1.0 사이의 확신도,
   "target_price": 목표가 (숫자),
-  "bull_case": "상승 시나리오 설명",
-  "bear_case": "하락 시나리오 설명",
+  "bull_case": "먼저 Bull case(상승 시나리오)를 독립적으로 작성한 뒤, 반대 입장에서 Bear case(하락 시나리오)를 작성하세요. 두 관점을 균형 있게 고려한 후 최종 recommendation을 결정하세요. bull_case는 최소 2문장 이상 구체적으로 작성.",
+  "bear_case": "Bear case(하락 시나리오)도 최소 2문장 이상 구체적으로 작성. bull_case와 독립적으로, 반대 관점에서 리스크와 하락 요인을 분석하세요.",
   "key_factors": ["핵심 요인 1", "핵심 요인 2", ...]
 }
+
+분석 순서:
+1. 먼저 상승 시나리오(bull_case)를 독립적으로 충분히 분석하세요.
+2. 그 다음, 완전히 반대 입장에서 하락 시나리오(bear_case)를 작성하세요.
+3. 두 시나리오를 균형 있게 비교한 후 최종 recommendation과 confidence를 결정하세요.
 
 모든 응답은 한국어로 작성하세요.
 """
@@ -126,6 +131,11 @@ def _format_technical_summary(indicators: dict[str, float | str | None]) -> str:
     """기술적 지표 dict를 사람이 읽을 수 있는 텍스트로 변환한다."""
     lines: list[str] = []
 
+    # 기술적 종합 점수
+    tech_score = indicators.get("technical_score")
+    if tech_score is not None:
+        lines.append(f"## 기술적 종합 점수: {tech_score}/10")
+
     # 이동평균
     sma_parts: list[str] = []
     for key, label in [
@@ -180,6 +190,27 @@ def _format_technical_summary(indicators: dict[str, float | str | None]) -> str:
     atr = indicators.get("atr_14")
     if atr is not None:
         lines.append(f"- ATR(14): {atr:,.2f}")
+
+    # ROC (Rate of Change)
+    roc_5 = indicators.get("roc_5")
+    roc_20 = indicators.get("roc_20")
+    roc_parts: list[str] = []
+    if roc_5 is not None:
+        roc_parts.append(f"5일: {roc_5:+.2%}")
+    if roc_20 is not None:
+        roc_parts.append(f"20일: {roc_20:+.2%}")
+    if roc_parts:
+        lines.append(f"- ROC: {', '.join(roc_parts)}")
+
+    # OBV
+    obv = indicators.get("obv")
+    if obv is not None:
+        lines.append(f"- OBV: {obv:,.0f}")
+
+    # VWAP
+    vwap = indicators.get("vwap")
+    if vwap is not None:
+        lines.append(f"- VWAP(20일): {vwap:,.2f}")
 
     # 추세/위치
     trend = indicators.get("trend")
