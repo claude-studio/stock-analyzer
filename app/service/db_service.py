@@ -19,6 +19,7 @@ from app.database.models import (
     NewsArticle,
     NewsStockImpact,
     Stock,
+    StockRelation,
 )
 
 logger = structlog.get_logger(__name__)
@@ -646,6 +647,100 @@ async def log_collection(
     )
     session.add(log)
     await session.flush()
+
+
+# ──────────────────────────────────────────────
+# StockRelation
+# ──────────────────────────────────────────────
+
+
+async def upsert_stock_relation(
+    session: AsyncSession,
+    source_stock_id: int,
+    target_stock_id: int,
+    relation_type: str,
+    strength: float | None,
+    context: str | None,
+    source: str = "llm",
+) -> None:
+    """종목 관계 upsert."""
+    strength_decimal = Decimal(str(round(strength, 3))) if strength is not None else None
+    stmt = pg_insert(StockRelation).values(
+        source_stock_id=source_stock_id,
+        target_stock_id=target_stock_id,
+        relation_type=relation_type,
+        strength=strength_decimal,
+        context=context[:500] if context else None,
+        source=source,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["source_stock_id", "relation_type", "target_stock_id"],
+        set_={
+            "strength": stmt.excluded.strength,
+            "context": stmt.excluded.context,
+            "source": stmt.excluded.source,
+        },
+    )
+    await session.execute(stmt)
+
+
+async def get_stock_relations(
+    session: AsyncSession,
+    stock_id: int,
+) -> list[dict]:
+    """종목의 모든 관계 조회."""
+    stmt = (
+        select(StockRelation, Stock.name, Stock.ticker)
+        .join(Stock, StockRelation.target_stock_id == Stock.id)
+        .where(StockRelation.source_stock_id == stock_id)
+        .order_by(StockRelation.strength.desc().nulls_last())
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    return [
+        {
+            "target_ticker": ticker,
+            "target_name": name,
+            "relation_type": rel.relation_type,
+            "strength": float(rel.strength) if rel.strength is not None else None,
+            "context": rel.context,
+            "source": rel.source,
+            "updated_at": str(rel.updated_at) if rel.updated_at else None,
+        }
+        for rel, name, ticker in rows
+    ]
+
+
+async def get_all_watchlist_relations(
+    session: AsyncSession,
+    stock_ids: list[int],
+) -> dict[int, list[dict]]:
+    """워치리스트 전체 종목의 관계를 한번에 조회 (프롬프트 주입용)."""
+    if not stock_ids:
+        return {}
+
+    stmt = (
+        select(StockRelation, Stock.name, Stock.ticker)
+        .join(Stock, StockRelation.target_stock_id == Stock.id)
+        .where(StockRelation.source_stock_id.in_(stock_ids))
+        .order_by(StockRelation.source_stock_id, StockRelation.strength.desc().nulls_last())
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    relations_map: dict[int, list[dict]] = {}
+    for rel, name, ticker in rows:
+        entry = {
+            "target_ticker": ticker,
+            "target_name": name,
+            "relation_type": rel.relation_type,
+            "strength": float(rel.strength) if rel.strength is not None else None,
+            "context": rel.context,
+        }
+        relations_map.setdefault(rel.source_stock_id, []).append(entry)
+
+    return relations_map
 
 
 # ──────────────────────────────────────────────

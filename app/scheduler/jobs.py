@@ -31,6 +31,7 @@ from app.service.db_service import (
     log_collection,
     save_analysis_report,
     upsert_news_articles,
+    upsert_stock_relation,
     upsert_stocks,
 )
 from app.utils.alerting import notify_failure, notify_success
@@ -179,7 +180,20 @@ async def job_news_collect() -> None:
                         timeout=settings.CLAUDE_TIMEOUT,
                     )
                     headlines = [a.get("title", "") for a in articles if a.get("title")]
-                    sentiments = await analyze_sentiment_batch(runner, headlines)
+
+                    # 관계 컨텍스트 로드
+                    relation_ctx = ""
+                    try:
+                        from app.analysis.ontology import build_relation_context_for_watchlist
+                        relation_ctx = await build_relation_context_for_watchlist(
+                            session, settings.KR_WATCHLIST,
+                        )
+                    except Exception:
+                        logger.warning("relation_context_load_failed", exc_info=True)
+
+                    sentiments = await analyze_sentiment_batch(
+                        runner, headlines, relation_context=relation_ctx,
+                    )
                     if sentiments:
                         # 방금 upsert한 기사의 ID 조회 (URL 기준)
                         urls = [
@@ -371,6 +385,14 @@ async def job_claude_analysis() -> None:
                     if fund:
                         fund_text = "\n".join(f"- {k}: {v}" for k, v in fund.items() if v is not None)
 
+                    # 관계 컨텍스트 로드
+                    rel_ctx = ""
+                    try:
+                        from app.analysis.ontology import build_relation_context
+                        rel_ctx = await build_relation_context(session, stock.id)
+                    except Exception:
+                        logger.warning("relation_context_failed", ticker=ticker, exc_info=True)
+
                     # 멀티 분석가 실행 (가치/모멘텀/감성)
                     combined_result, individual_results = await run_multi_analysis(
                         runner=runner,
@@ -382,6 +404,7 @@ async def job_claude_analysis() -> None:
                         indicators=tech_indicators if tech_indicators else None,
                         fundamental_summary=fund_text,
                         session=session,
+                        relation_context=rel_ctx,
                     )
 
                     # 개별 분석가 결과 저장
@@ -769,3 +792,102 @@ async def job_weekly_reflection() -> None:
             )
             await session.commit()
         await notify_failure("weekly_reflection", exc, started_at)
+
+
+async def job_seed_relations() -> None:
+    """워치리스트 종목의 관계 시드를 생성한다 (1회성 또는 월 1회)."""
+    started_at = datetime.now(tz=KST)
+    logger.info("job_started", job="seed_relations", started_at=started_at.isoformat())
+    try:
+        runner = ClaudeRunner(
+            claude_path=settings.CLAUDE_PATH,
+            timeout=settings.CLAUDE_TIMEOUT,
+        )
+        from app.analysis.ontology import generate_relation_seed
+
+        seeded_count = 0
+        async with async_session_factory() as session:
+            stock_name_map = await get_stock_name_map(session)
+            # ticker -> stock_id 역 매핑
+            ticker_to_id: dict[str, int] = {}
+            name_to_id: dict[str, int] = {}
+            for key, sid in stock_name_map.items():
+                if len(key) <= 10:
+                    ticker_to_id[key] = sid
+                name_to_id[key] = sid
+
+            for ticker in settings.KR_WATCHLIST:
+                stock = await get_stock_by_ticker(session, ticker)
+                if not stock:
+                    logger.warning("seed_relations_stock_not_found", ticker=ticker)
+                    continue
+
+                try:
+                    seeds = await generate_relation_seed(
+                        runner, ticker, stock.name, stock.sector or "",
+                    )
+                    for seed in seeds:
+                        target_ticker = seed.get("target_ticker", "")
+                        target_name = seed.get("target_name", "")
+                        target_id = ticker_to_id.get(target_ticker) or name_to_id.get(target_name)
+                        if not target_id:
+                            continue
+
+                        rel_type = seed.get("type", "sector_peer")
+                        if rel_type not in (
+                            "competitor", "supplier", "customer", "affiliate", "sector_peer",
+                        ):
+                            rel_type = "sector_peer"
+
+                        await upsert_stock_relation(
+                            session,
+                            source_stock_id=stock.id,
+                            target_stock_id=target_id,
+                            relation_type=rel_type,
+                            strength=seed.get("strength"),
+                            context=seed.get("context"),
+                            source="llm",
+                        )
+                        seeded_count += 1
+
+                    logger.info("seed_relations_done", ticker=ticker, count=len(seeds))
+                except (RuntimeError, TimeoutError):
+                    logger.warning("seed_relations_failed", ticker=ticker, exc_info=True)
+
+                await asyncio.sleep(2)
+
+            await session.commit()
+
+        completed_at = datetime.now(tz=KST)
+        async with async_session_factory() as session:
+            await log_collection(
+                session,
+                job_type="seed_relations",
+                status="success",
+                started_at=started_at,
+                completed_at=completed_at,
+                target_date=started_at.date(),
+                stocks_count=seeded_count,
+            )
+            await session.commit()
+        logger.info(
+            "job_completed",
+            job="seed_relations",
+            started_at=started_at.isoformat(),
+            completed_at=completed_at.isoformat(),
+            elapsed_seconds=(completed_at - started_at).total_seconds(),
+            seeded_count=seeded_count,
+        )
+    except Exception as exc:
+        logger.exception("job_failed", job="seed_relations")
+        async with async_session_factory() as session:
+            await log_collection(
+                session,
+                job_type="seed_relations",
+                status="failure",
+                started_at=started_at,
+                completed_at=datetime.now(tz=KST),
+                error_message=str(exc),
+            )
+            await session.commit()
+        await notify_failure("seed_relations", exc, started_at)

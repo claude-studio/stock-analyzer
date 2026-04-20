@@ -29,6 +29,7 @@ class AnalysisResult(BaseModel):
     bull_case: str
     bear_case: str
     key_factors: list[str]
+    impact_chain: list[dict] = Field(default_factory=list)
 
     @field_validator("target_price")
     @classmethod
@@ -118,6 +119,7 @@ async def run_stock_analysis(
     fundamental_summary: str = "",
     system_prompt_addon: str = "",
     past_analyses_text: str = "",
+    relation_context: str = "",
 ) -> AnalysisResult:
     """종목 분석을 실행하고 결과를 반환한다.
 
@@ -132,6 +134,7 @@ async def run_stock_analysis(
         fundamental_summary: 펀더멘탈 요약 텍스트
         system_prompt_addon: 시스템 프롬프트에 추가할 텍스트 (분석가별 지침)
         past_analyses_text: BM25 과거 분석 참조 텍스트
+        relation_context: 종목 관계 컨텍스트 텍스트
 
     Returns:
         AnalysisResult 파싱된 분석 결과
@@ -151,6 +154,7 @@ async def run_stock_analysis(
             market_context=market_ctx,
             indicators=indicators,
             fundamental_summary=fundamental_summary,
+            relation_context=relation_context,
         )
     else:
         prompt = build_analysis_prompt(
@@ -160,6 +164,7 @@ async def run_stock_analysis(
             news_summary=news_summary,
             market_context=market_ctx,
             fundamental_summary=fundamental_summary,
+            relation_context=relation_context,
         )
 
     if system_prompt_addon:
@@ -209,6 +214,7 @@ async def run_multi_analysis(
     indicators: dict | None = None,
     fundamental_summary: str = "",
     session: "AsyncSession | None" = None,
+    relation_context: str = "",
 ) -> tuple[AnalysisResult, dict[str, AnalysisResult]]:
     """멀티 분석가 시스템으로 종합 분석을 실행한다.
 
@@ -225,6 +231,7 @@ async def run_multi_analysis(
         indicators: 기술적 지표 dict
         fundamental_summary: 펀더멘탈 요약 텍스트
         session: DB 세션 (BM25 메모리 조회용)
+        relation_context: 종목 관계 컨텍스트 텍스트
 
     Returns:
         (종합 결과, {분석가 유형: 개별 결과} dict)
@@ -272,6 +279,7 @@ async def run_multi_analysis(
                 fundamental_summary=fundamental_summary,
                 system_prompt_addon=config["system_prompt_addon"],
                 past_analyses_text=past_analyses_text,
+                relation_context=relation_context,
             )
             individual_results[analyst_type] = result
             logger.info(
@@ -310,6 +318,7 @@ def _combine_analyst_results(
     bull_parts: list[str] = []
     bear_parts: list[str] = []
     summaries: list[str] = []
+    all_impact_chains: list[dict] = []
 
     for analyst_type, result in results.items():
         weight = config.get(analyst_type, {}).get("weight", 1.0 / len(results))
@@ -324,6 +333,7 @@ def _combine_analyst_results(
         bull_parts.append(f"[{analyst_name}] {result.bull_case}")
         bear_parts.append(f"[{analyst_name}] {result.bear_case}")
         summaries.append(f"[{analyst_name}] {result.summary}")
+        all_impact_chains.extend(result.impact_chain)
 
     # 다수결 recommendation
     best_rec = max(rec_votes, key=rec_votes.get)
@@ -336,6 +346,15 @@ def _combine_analyst_results(
             seen.add(f)
             unique_factors.append(f)
 
+    # impact_chain 중복 제거 (target 기준)
+    seen_targets: set[str] = set()
+    unique_chains: list[dict] = []
+    for chain in all_impact_chains:
+        target = chain.get("target", "")
+        if target and target not in seen_targets:
+            seen_targets.add(target)
+            unique_chains.append(chain)
+
     return AnalysisResult(
         summary=" / ".join(summaries),
         recommendation=best_rec,
@@ -344,6 +363,7 @@ def _combine_analyst_results(
         bull_case=" | ".join(bull_parts),
         bear_case=" | ".join(bear_parts),
         key_factors=unique_factors[:10],
+        impact_chain=unique_chains,
     )
 
 

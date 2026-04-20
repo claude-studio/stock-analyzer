@@ -19,13 +19,22 @@ SYSTEM_PROMPT: str = """\
   "target_price": 목표가 (숫자),
   "bull_case": "먼저 Bull case(상승 시나리오)를 독립적으로 작성한 뒤, 반대 입장에서 Bear case(하락 시나리오)를 작성하세요. 두 관점을 균형 있게 고려한 후 최종 recommendation을 결정하세요. bull_case는 최소 2문장 이상 구체적으로 작성.",
   "bear_case": "Bear case(하락 시나리오)도 최소 2문장 이상 구체적으로 작성. bull_case와 독립적으로, 반대 관점에서 리스크와 하락 요인을 분석하세요.",
-  "key_factors": ["핵심 요인 1", "핵심 요인 2", ...]
+  "key_factors": ["핵심 요인 1", "핵심 요인 2", ...],
+  "impact_chain": [{"target": "종목명", "relation": "관계유형", "direction": "bullish|bearish|neutral", "reasoning": "이유"}]
 }
 
 분석 순서:
-1. 먼저 상승 시나리오(bull_case)를 독립적으로 충분히 분석하세요.
-2. 그 다음, 완전히 반대 입장에서 하락 시나리오(bear_case)를 작성하세요.
-3. 두 시나리오를 균형 있게 비교한 후 최종 recommendation과 confidence를 결정하세요.
+1. 기술적 지표와 가격 데이터를 기반으로 정량 판단
+2. 뉴스 감성과 시장 컨텍스트를 결합
+3. 관계 종목(경쟁사, 공급업체, 고객사)의 최근 동향이 이 종목에 미치는 간접 영향 추론
+4. Bull case와 Bear case를 독립적으로 작성
+5. 종합 판단
+
+"impact_chain" 필드를 JSON 응답에 포함하세요:
+"impact_chain": [
+  {"target": "종목명", "relation": "관계유형", "direction": "bullish|bearish|neutral", "reasoning": "이유"}
+]
+관계 정보가 없으면 빈 배열로 두세요.
 
 모든 응답은 한국어로 작성하세요.
 """
@@ -39,6 +48,7 @@ def build_analysis_prompt(
     market_context: str,
     technical_summary: str = "",
     fundamental_summary: str = "",
+    relation_context: str = "",
 ) -> str:
     """종목 분석용 프롬프트를 조합한다 (FinGPT HG-NC 4단계 구조).
 
@@ -50,6 +60,7 @@ def build_analysis_prompt(
         market_context: KOSPI/KOSDAQ 현재 수준
         technical_summary: 기술적 지표 요약 텍스트 (RSI, MACD, BB, SMA, 추세 등)
         fundamental_summary: 펀더멘탈 요약 텍스트
+        relation_context: 종목 관계 컨텍스트 텍스트
     """
     sections: list[str] = [SYSTEM_PROMPT]
 
@@ -86,6 +97,12 @@ def build_analysis_prompt(
 ## 시장 컨텍스트
 {market_context}""")
 
+    # 종목 관계 컨텍스트
+    if relation_context:
+        sections.append(f"""
+## 종목 관계 (영향 체인 추론용)
+{relation_context}""")
+
     sections.append("""
 위 정량/정성 데이터를 종합하여 투자 분석 결과를 JSON으로 응답하세요.""")
 
@@ -100,6 +117,7 @@ def build_analysis_prompt_with_indicators(
     market_context: str,
     indicators: dict[str, float | str | None],
     fundamental_summary: str = "",
+    relation_context: str = "",
 ) -> str:
     """기술적 지표 dict를 해석 텍스트로 변환 후 분석 프롬프트를 생성한다.
 
@@ -114,6 +132,7 @@ def build_analysis_prompt_with_indicators(
         market_context: KOSPI/KOSDAQ 현재 수준
         indicators: calculate_technical_indicators() 반환 dict
         fundamental_summary: 펀더멘탈 요약 텍스트
+        relation_context: 종목 관계 컨텍스트 텍스트
     """
     technical_summary = _format_technical_summary(indicators)
     return build_analysis_prompt(
@@ -124,6 +143,7 @@ def build_analysis_prompt_with_indicators(
         market_context=market_context,
         technical_summary=technical_summary,
         fundamental_summary=fundamental_summary,
+        relation_context=relation_context,
     )
 
 

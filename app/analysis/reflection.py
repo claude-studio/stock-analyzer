@@ -13,8 +13,11 @@ from zoneinfo import ZoneInfo
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+
 from app.analysis.accuracy import get_accuracy_stats
 from app.analysis.claude_runner import ClaudeRunner
+from app.database.models import NewsStockImpact, NewsArticle, Stock, StockRelation
 from app.utils.discord import send_alert
 
 logger = structlog.get_logger(__name__)
@@ -157,7 +160,170 @@ async def run_weekly_reflection(
         low_accuracy_types=low_accuracy_types,
     )
 
+    # 관계 갱신
+    try:
+        await _update_relations_from_news(runner, session)
+    except Exception:
+        logger.warning("relation_update_failed", exc_info=True)
+
     return summary
+
+
+_RELATION_UPDATE_PROMPT = """\
+현재 종목 관계 데이터와 최근 1주간 뉴스에서 감지된 시그널을 비교하라.
+
+## 현재 관계
+{current_relations}
+
+## 최근 1주 뉴스 시그널
+{news_signals}
+
+신규/변경/소멸 관계를 JSON 배열로 응답하라.
+변경이 없으면 빈 배열 []을 반환하라.
+
+형식:
+[
+  {{"action": "add|update|remove", "source_ticker": "005930", "target_ticker": "000660", "type": "competitor", "strength": 0.9, "context": "사유"}}
+]
+"""
+
+
+async def _update_relations_from_news(
+    runner: ClaudeRunner,
+    session: AsyncSession,
+) -> None:
+    """최근 1주 뉴스에서 감지된 관계 변화를 반영한다."""
+    from datetime import timedelta
+
+    cutoff = datetime.now(tz=KST) - timedelta(days=7)
+
+    # 현재 관계 조회
+    rel_stmt = (
+        select(
+            StockRelation.relation_type,
+            StockRelation.strength,
+            StockRelation.context,
+            Stock.ticker,
+            Stock.name,
+        )
+        .join(Stock, StockRelation.target_stock_id == Stock.id)
+        .order_by(StockRelation.source_stock_id)
+        .limit(200)
+    )
+    rel_result = await session.execute(rel_stmt)
+    rel_rows = rel_result.all()
+
+    if not rel_rows:
+        logger.info("relation_update_skipped", reason="no_existing_relations")
+        return
+
+    current_lines: list[str] = []
+    for rel_type, strength, context, ticker, name in rel_rows:
+        s_val = f" ({float(strength):.1f})" if strength else ""
+        ctx_val = f" - {context}" if context else ""
+        current_lines.append(f"- {name}({ticker}) [{rel_type}]{s_val}{ctx_val}")
+
+    # 최근 7일 뉴스 시그널 (secondary_impacts 패턴이 있는 것)
+    news_stmt = (
+        select(NewsStockImpact.reason, Stock.name, Stock.ticker)
+        .join(Stock, NewsStockImpact.stock_id == Stock.id)
+        .join(NewsArticle, NewsStockImpact.news_article_id == NewsArticle.id)
+        .where(NewsArticle.published_at >= cutoff)
+        .where(NewsStockImpact.reason.isnot(None))
+        .order_by(NewsArticle.published_at.desc())
+        .limit(50)
+    )
+    news_result = await session.execute(news_stmt)
+    news_rows = news_result.all()
+
+    if not news_rows:
+        logger.info("relation_update_skipped", reason="no_recent_news_signals")
+        return
+
+    signal_lines: list[str] = []
+    for reason, name, ticker in news_rows:
+        signal_lines.append(f"- {name}({ticker}): {reason[:200]}")
+
+    prompt = _RELATION_UPDATE_PROMPT.format(
+        current_relations="\n".join(current_lines[:100]),
+        news_signals="\n".join(signal_lines[:50]),
+    )
+
+    try:
+        result = await runner.run(prompt, output_format="json")
+    except (RuntimeError, TimeoutError) as e:
+        logger.warning("relation_update_claude_failed", error=str(e))
+        return
+
+    changes: list[dict] = []
+    if isinstance(result, list):
+        changes = result
+    elif isinstance(result, str):
+        try:
+            parsed = json.loads(result)
+            if isinstance(parsed, list):
+                changes = parsed
+        except json.JSONDecodeError:
+            pass
+
+    if not changes:
+        logger.info("relation_update_no_changes")
+        return
+
+    from app.service.db_service import upsert_stock_relation, get_stock_id_map
+
+    stock_id_map = await get_stock_id_map(session)
+    updated_count = 0
+
+    for change in changes:
+        action = change.get("action", "")
+        source_ticker = change.get("source_ticker", "")
+        target_ticker = change.get("target_ticker", "")
+        source_id = stock_id_map.get(source_ticker)
+        target_id = stock_id_map.get(target_ticker)
+
+        if not source_id or not target_id:
+            continue
+
+        if action in ("add", "update"):
+            await upsert_stock_relation(
+                session,
+                source_stock_id=source_id,
+                target_stock_id=target_id,
+                relation_type=change.get("type", "sector_peer"),
+                strength=change.get("strength"),
+                context=change.get("context"),
+                source="news_cooccurrence",
+            )
+            updated_count += 1
+        elif action == "remove":
+            del_stmt = (
+                select(StockRelation)
+                .where(
+                    StockRelation.source_stock_id == source_id,
+                    StockRelation.target_stock_id == target_id,
+                    StockRelation.relation_type == change.get("type", ""),
+                )
+            )
+            del_result = await session.execute(del_stmt)
+            rel_to_delete = del_result.scalar_one_or_none()
+            if rel_to_delete:
+                await session.delete(rel_to_delete)
+                updated_count += 1
+
+    await session.flush()
+
+    if updated_count > 0:
+        try:
+            await send_alert(
+                title="종목 관계 갱신",
+                message=f"뉴스 기반 관계 갱신 {updated_count}건 반영",
+                color=0x3498DB,
+            )
+        except Exception:
+            logger.warning("relation_update_discord_failed", exc_info=True)
+
+    logger.info("relation_update_completed", updated_count=updated_count)
 
 
 def _append_reflection_log(entry: dict) -> None:

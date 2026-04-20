@@ -185,3 +185,32 @@ class AccuracyTracker(Base):
     )
 
     analysis_report: Mapped["AnalysisReport"] = relationship()
+
+
+class StockRelation(Base):
+    """종목 간 관계 그래프."""
+
+    __tablename__ = "stock_relations"
+    __table_args__ = (
+        Index(
+            "ix_stock_relations_pair",
+            "source_stock_id",
+            "relation_type",
+            "target_stock_id",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source_stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id", ondelete="CASCADE"))
+    target_stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id", ondelete="CASCADE"))
+    relation_type: Mapped[str] = mapped_column(String(20))
+    strength: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    context: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(20), default="llm")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    source_stock: Mapped["Stock"] = relationship(foreign_keys=[source_stock_id])
+    target_stock: Mapped["Stock"] = relationship(foreign_keys=[target_stock_id])

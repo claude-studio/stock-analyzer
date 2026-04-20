@@ -26,6 +26,7 @@ from app.service.db_service import (
     get_recent_news,
     get_recent_news_with_stock,
     get_stock_by_ticker,
+    get_stock_relations,
     list_stocks as db_list_stocks,
     save_analysis_report,
 )
@@ -477,4 +478,42 @@ async def request_stock_analysis(
         "ticker": ticker,
         "status": "accepted",
         "message": f"{ticker} 분석이 대기열에 추가되었습니다.",
+    }
+
+
+@router.post(
+    "/relations/seed",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(check_rate_limit)],
+)
+async def seed_relations(background_tasks: BackgroundTasks) -> dict[str, str]:
+    """관계 시드 생성 트리거."""
+    from app.scheduler.jobs import job_seed_relations
+
+    background_tasks.add_task(job_seed_relations)
+    logger.info("seed_relations_queued")
+    return {
+        "status": "accepted",
+        "message": "관계 시드 생성이 대기열에 추가되었습니다.",
+    }
+
+
+@router.get("/stocks/{ticker}/relations")
+async def get_ticker_relations(
+    ticker: str,
+    session: DbSession,
+) -> dict[str, Any]:
+    """종목의 관계 목록을 반환한다."""
+    stock = await get_stock_by_ticker(session, ticker)
+    if not stock:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"종목을 찾을 수 없습니다: {ticker}",
+        )
+
+    relations = await get_stock_relations(session, stock.id)
+    return {
+        "ticker": ticker,
+        "name": stock.name,
+        "relations": relations,
     }
