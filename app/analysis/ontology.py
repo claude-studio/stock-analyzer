@@ -441,3 +441,132 @@ async def seed_from_llm(
         await asyncio.sleep(2)
 
     return seeded
+
+
+# ──────────────────────────────────────────────
+# 공정거래위원회 기업집단 API 연동
+# ──────────────────────────────────────────────
+
+FTC_BASE_URL = "http://apis.data.go.kr/1051000"
+
+
+def _fetch_ftc_api_sync(endpoint: str, params: dict) -> list[dict]:
+    """공정위 API 범용 호출."""
+    import httpx
+    from app.core.config import settings
+
+    if not settings.FTC_API_KEY:
+        return []
+
+    params["serviceKey"] = settings.FTC_API_KEY
+    params.setdefault("type", "json")
+
+    try:
+        resp = httpx.get(f"{FTC_BASE_URL}/{endpoint}", params=params, timeout=30)
+        data = resp.json()
+        items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+        if isinstance(items, dict):
+            items = [items]
+        return items
+    except Exception as e:
+        logger.warning("ftc_api_failed", endpoint=endpoint, error=str(e))
+        return []
+
+
+async def seed_from_ftc(session: AsyncSession) -> int:
+    """공정위 기업집단 API에서 계열사 관계를 수집하여 stock_relations에 저장한다.
+
+    1. 대규모기업집단 목록 조회
+    2. 각 그룹의 소속회사 목록 조회
+    3. 워치리스트 종목이 속한 그룹의 소속회사를 affiliate로 연결
+    """
+    from app.core.config import settings
+
+    if not settings.FTC_API_KEY:
+        logger.info("ftc_api_key_not_set", action="skip")
+        return 0
+
+    now = datetime.now(tz=KST)
+    dsgnYm = f"{now.year}05" if now.month >= 6 else f"{now.year - 1}05"
+
+    # 전체 종목 name -> id 매핑
+    name_result = await session.execute(
+        select(Stock.name, Stock.id).where(Stock.is_active.is_(True))
+    )
+    all_stocks_by_name: dict[str, int] = {row.name: row.id for row in name_result}
+
+    # 워치리스트 종목 id 세트
+    watchlist_ids: set[int] = set()
+    for ticker in settings.KR_WATCHLIST:
+        stock = await get_stock_by_ticker(session, ticker)
+        if stock:
+            watchlist_ids.add(stock.id)
+
+    # Step 1: 기업집단 목록
+    groups = await asyncio.to_thread(
+        _fetch_ftc_api_sync,
+        "MajorGroupDesignationInfoService/getMajorGroupDesignationInfo",
+        {"pageNo": 1, "numOfRows": 100, "dsgnYm": dsgnYm},
+    )
+    if not groups:
+        logger.info("ftc_no_groups", dsgnYm=dsgnYm)
+        return 0
+
+    logger.info("ftc_groups_loaded", count=len(groups), dsgnYm=dsgnYm)
+
+    seeded = 0
+    for group in groups:
+        group_code = group.get("enterpriseGrpCd", "")
+        group_name = group.get("enterpriseGrpNm", "")
+        if not group_code:
+            continue
+
+        # Step 2: 소속회사 목록
+        affiliates = await asyncio.to_thread(
+            _fetch_ftc_api_sync,
+            "MajorGroupAffiliateInfoService/getMajorGroupAffiliateInfo",
+            {"pageNo": 1, "numOfRows": 500, "enterpriseGrpCd": group_code, "dsgnYm": dsgnYm},
+        )
+        if not affiliates:
+            continue
+
+        # 소속회사 중 상장사 매칭
+        member_ids: list[int] = []
+        for aff in affiliates:
+            company_name = aff.get("affiliateNm", "").strip()
+            clean_name = company_name.replace("(주)", "").replace("주식회사", "").replace("㈜", "").strip()
+            sid = all_stocks_by_name.get(clean_name) or all_stocks_by_name.get(company_name)
+            if sid:
+                member_ids.append(sid)
+
+        watchlist_in_group = watchlist_ids & set(member_ids)
+        if not watchlist_in_group:
+            continue
+
+        logger.info(
+            "ftc_group_relevant",
+            group=group_name,
+            members=len(member_ids),
+            watchlist_hits=len(watchlist_in_group),
+        )
+
+        # Step 3: 워치리스트 종목 <-> 같은 그룹 소속 종목을 affiliate로 연결
+        for source_id in watchlist_in_group:
+            for target_id in member_ids:
+                if target_id == source_id:
+                    continue
+                await upsert_stock_relation(
+                    session,
+                    source_stock_id=source_id,
+                    target_stock_id=target_id,
+                    relation_type="affiliate",
+                    strength=0.8,
+                    context=f"공정위 기업집단: {group_name}",
+                    source="ftc",
+                )
+                seeded += 1
+
+        await asyncio.sleep(0.5)
+
+    logger.info("ftc_seed_done", total=seeded)
+    return seeded

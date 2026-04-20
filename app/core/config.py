@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     CLAUDE_PATH: str = "/usr/bin/claude"
     CLAUDE_TIMEOUT: int = 120
     DART_API_KEY: str = ""
+    FTC_API_KEY: str = ""
     TEAMS_WEBHOOK_URL: str = ""
     DISCORD_WEBHOOK_URL: str = ""
     API_KEY: str = ""

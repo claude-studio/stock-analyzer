@@ -804,22 +804,26 @@ async def job_seed_relations() -> dict[str, int]:
     Returns:
         {"sector_map": int, "dart": int, "llm": int} 각 소스별 생성 건수
     """
-    from app.analysis.ontology import seed_from_dart, seed_from_llm, seed_sector_peers
+    from app.analysis.ontology import seed_from_dart, seed_from_ftc, seed_from_llm, seed_sector_peers
 
     started_at = datetime.now(tz=KST)
     logger.info("job_started", job="seed_relations", started_at=started_at.isoformat())
-    counts = {"sector_map": 0, "dart": 0, "llm": 0}
+    counts = {"sector_map": 0, "ftc": 0, "dart": 0, "llm": 0}
     try:
         async with async_session_factory() as session:
             # Step 1: sector_peer (SQL 쿼리, 즉시)
             counts["sector_map"] = await seed_sector_peers(session)
             logger.info("sector_peers_seeded", count=counts["sector_map"])
 
-            # Step 2: DART affiliate (API 호출)
+            # Step 2: 공정위 기업집단 (공식 계열사 관계)
+            counts["ftc"] = await seed_from_ftc(session)
+            logger.info("ftc_affiliates_seeded", count=counts["ftc"])
+
+            # Step 3: DART 타법인출자 (지분 투자 관계)
             counts["dart"] = await seed_from_dart(session, settings.KR_WATCHLIST)
             logger.info("dart_affiliates_seeded", count=counts["dart"])
 
-            # Step 3: Claude 보충 (경쟁사/공급망)
+            # Step 4: Claude 보충 (경쟁사/공급망 -- 공식 데이터로 커버 안 되는 관계만)
             runner = ClaudeRunner(
                 claude_path=settings.CLAUDE_PATH,
                 timeout=settings.CLAUDE_TIMEOUT,
