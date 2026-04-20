@@ -1,6 +1,6 @@
 [project]
 name = "stock-analyzer"
-version = "0.1.0"
+version = "0.2.0"
 description = "Claude Code Headless 기반 주식 분석 서버"
 requires-python = ">=3.12"
 dependencies = [
