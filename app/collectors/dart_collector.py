@@ -44,7 +44,7 @@ def _get_dart_reader():
     if not settings.DART_API_KEY:
         return None
     import OpenDartReader
-    return OpenDartReader.OpenDartReader(settings.DART_API_KEY)
+    return OpenDartReader(settings.DART_API_KEY)
 
 
 def _parse_amount(value: str | int | float | None) -> int | None:
