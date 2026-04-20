@@ -447,39 +447,56 @@ async def seed_from_llm(
 # 공정거래위원회 기업집단 API 연동
 # ──────────────────────────────────────────────
 
-FTC_BASE_URL = "http://apis.data.go.kr/1051000"
+FTC_API_URL = "http://apis.data.go.kr/1130000/typeOfBusinessCompSttusList/typeOfBusinessCompSttusListApi"
 
 
-def _fetch_ftc_api_sync(endpoint: str, params: dict) -> list[dict]:
-    """공정위 API 범용 호출."""
+def _fetch_ftc_all_members_sync(year: str) -> dict[str, set[str]]:
+    """공정위 기업집단 소속회사 전체를 동기로 조회한다.
+
+    Returns:
+        {그룹명: {회사명, ...}} 매핑
+    """
+    import xml.etree.ElementTree as ET
+
     import httpx
     from app.core.config import settings
 
     if not settings.FTC_API_KEY:
-        return []
+        return {}
 
-    params["serviceKey"] = settings.FTC_API_KEY
-    params.setdefault("type", "json")
+    group_members: dict[str, set[str]] = {}
 
-    try:
-        resp = httpx.get(f"{FTC_BASE_URL}/{endpoint}", params=params, timeout=30)
-        data = resp.json()
-        items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
-        if isinstance(items, dict):
-            items = [items]
-        return items
-    except Exception as e:
-        logger.warning("ftc_api_failed", endpoint=endpoint, error=str(e))
-        return []
+    for page in range(1, 20):
+        params = {
+            "serviceKey": settings.FTC_API_KEY,
+            "pageNo": page,
+            "numOfRows": 500,
+            "presentnYear": year,
+        }
+        try:
+            resp = httpx.get(FTC_API_URL, params=params, timeout=30)
+            root = ET.fromstring(resp.text)
+        except Exception as e:
+            logger.warning("ftc_fetch_failed", page=page, error=str(e))
+            break
+
+        items = root.findall("typeOfBusinessCompSttus")
+        if not items:
+            break
+
+        for item in items:
+            group = item.findtext("unityGrupNm", "")
+            company = item.findtext("entrprsNm", "")
+            if group and company:
+                clean = company.replace("(주)", "").replace("주식회사", "").replace("㈜", "").strip()
+                group_members.setdefault(group, set()).add(clean)
+
+    logger.info("ftc_all_fetched", groups=len(group_members), year=year)
+    return group_members
 
 
 async def seed_from_ftc(session: AsyncSession) -> int:
-    """공정위 기업집단 API에서 계열사 관계를 수집하여 stock_relations에 저장한다.
-
-    1. 대규모기업집단 목록 조회
-    2. 각 그룹의 소속회사 목록 조회
-    3. 워치리스트 종목이 속한 그룹의 소속회사를 affiliate로 연결
-    """
+    """공정위 기업집단 API에서 계열사 관계를 수집하여 stock_relations에 저장한다."""
     from app.core.config import settings
 
     if not settings.FTC_API_KEY:
@@ -487,7 +504,7 @@ async def seed_from_ftc(session: AsyncSession) -> int:
         return 0
 
     now = datetime.now(tz=KST)
-    dsgnYm = f"{now.year}05" if now.month >= 6 else f"{now.year - 1}05"
+    year = str(now.year - 1) if now.month <= 5 else str(now.year)
 
     # 전체 종목 name -> id 매핑
     name_result = await session.execute(
@@ -495,62 +512,39 @@ async def seed_from_ftc(session: AsyncSession) -> int:
     )
     all_stocks_by_name: dict[str, int] = {row.name: row.id for row in name_result}
 
-    # 워치리스트 종목 id 세트
-    watchlist_ids: set[int] = set()
+    # 워치리스트 종목 name/id
+    watchlist_stocks: dict[int, str] = {}
     for ticker in settings.KR_WATCHLIST:
         stock = await get_stock_by_ticker(session, ticker)
         if stock:
-            watchlist_ids.add(stock.id)
+            watchlist_stocks[stock.id] = stock.name
 
-    # Step 1: 기업집단 목록
-    groups = await asyncio.to_thread(
-        _fetch_ftc_api_sync,
-        "MajorGroupDesignationInfoService/getMajorGroupDesignationInfo",
-        {"pageNo": 1, "numOfRows": 100, "dsgnYm": dsgnYm},
-    )
-    if not groups:
-        logger.info("ftc_no_groups", dsgnYm=dsgnYm)
+    # 공정위 데이터 조회
+    group_members = await asyncio.to_thread(_fetch_ftc_all_members_sync, year)
+    if not group_members:
         return 0
 
-    logger.info("ftc_groups_loaded", count=len(groups), dsgnYm=dsgnYm)
-
     seeded = 0
-    for group in groups:
-        group_code = group.get("enterpriseGrpCd", "")
-        group_name = group.get("enterpriseGrpNm", "")
-        if not group_code:
-            continue
-
-        # Step 2: 소속회사 목록
-        affiliates = await asyncio.to_thread(
-            _fetch_ftc_api_sync,
-            "MajorGroupAffiliateInfoService/getMajorGroupAffiliateInfo",
-            {"pageNo": 1, "numOfRows": 500, "enterpriseGrpCd": group_code, "dsgnYm": dsgnYm},
-        )
-        if not affiliates:
-            continue
-
-        # 소속회사 중 상장사 매칭
+    for group_name, members in group_members.items():
+        # 이 그룹에서 상장사 매칭
         member_ids: list[int] = []
-        for aff in affiliates:
-            company_name = aff.get("affiliateNm", "").strip()
-            clean_name = company_name.replace("(주)", "").replace("주식회사", "").replace("㈜", "").strip()
-            sid = all_stocks_by_name.get(clean_name) or all_stocks_by_name.get(company_name)
+        for company_name in members:
+            sid = all_stocks_by_name.get(company_name)
             if sid:
                 member_ids.append(sid)
 
-        watchlist_in_group = watchlist_ids & set(member_ids)
+        # 워치리스트 종목이 이 그룹에 있는지
+        watchlist_in_group = set(watchlist_stocks.keys()) & set(member_ids)
         if not watchlist_in_group:
             continue
 
         logger.info(
             "ftc_group_relevant",
             group=group_name,
-            members=len(member_ids),
+            listed_members=len(member_ids),
             watchlist_hits=len(watchlist_in_group),
         )
 
-        # Step 3: 워치리스트 종목 <-> 같은 그룹 소속 종목을 affiliate로 연결
         for source_id in watchlist_in_group:
             for target_id in member_ids:
                 if target_id == source_id:
@@ -566,7 +560,7 @@ async def seed_from_ftc(session: AsyncSession) -> int:
                 )
                 seeded += 1
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.3)
 
     logger.info("ftc_seed_done", total=seeded)
     return seeded
