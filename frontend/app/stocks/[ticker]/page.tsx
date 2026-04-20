@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchAPI } from "@/lib/api";
-import type { Stock, AnalysisReport, DailyPrice, TechnicalIndicators, NewsArticle } from "@/lib/api";
+import type { Stock, AnalysisReport, DailyPrice, TechnicalIndicators, NewsArticle, NewsImpactSummary } from "@/lib/api";
+import { fetchNewsImpactSummary } from "@/lib/api";
 import StockChartWrapper from "@/components/charts/StockChartWrapper";
 
 function formatNumber(val: number | null | undefined, opts?: Intl.NumberFormatOptions): string {
@@ -126,6 +127,7 @@ export default function StockDetailPage() {
   const [latestPrice, setLatestPrice] = useState<DailyPrice | null>(null);
   const [technical, setTechnical] = useState<TechnicalIndicators | null>(null);
   const [news, setNews] = useState<NewsArticle[]>([]);
+  const [newsImpact, setNewsImpact] = useState<NewsImpactSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [techLoading, setTechLoading] = useState(true);
 
@@ -172,6 +174,15 @@ export default function StockDetailPage() {
       })
       .finally(() => {
         setTechLoading(false);
+      });
+
+    // 뉴스 영향 요약 호출
+    fetchNewsImpactSummary(ticker, 7)
+      .then((data) => {
+        setNewsImpact(data);
+      })
+      .catch(() => {
+        setNewsImpact(null);
       });
   }, [ticker]);
 
@@ -398,6 +409,56 @@ export default function StockDetailPage() {
         )}
       </div>
 
+      {/* 뉴스 영향 요약 */}
+      {newsImpact && newsImpact.total_news > 0 && (
+        <div>
+          <h2 className="text-lg font-semibold mb-4">최근 7일 뉴스 영향</h2>
+          <div className="rounded-lg border border-[#1f1f1f] bg-[#111111] p-4">
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-400">{newsImpact.bullish_count}</div>
+                <div className="text-xs text-gray-500">긍정</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-red-400">{newsImpact.bearish_count}</div>
+                <div className="text-xs text-gray-500">부정</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-gray-400">{newsImpact.neutral_count}</div>
+                <div className="text-xs text-gray-500">중립</div>
+              </div>
+            </div>
+
+            {newsImpact.avg_impact_score !== 0 && (
+              <div className="mb-4 text-center">
+                <span className="text-xs text-gray-500">평균 영향 점수 </span>
+                <span className={`text-sm font-semibold tabular-nums ${
+                  newsImpact.avg_impact_score > 0 ? "text-green-400" :
+                  newsImpact.avg_impact_score < 0 ? "text-red-400" : "text-gray-400"
+                }`}>
+                  {newsImpact.avg_impact_score >= 0 ? "+" : ""}{newsImpact.avg_impact_score.toFixed(3)}
+                </span>
+              </div>
+            )}
+
+            {newsImpact.recent_impacts.slice(0, 5).map((imp, idx) => (
+              <div key={idx} className="flex items-center gap-2 py-2 border-t border-[#1f1f1f]">
+                <span className={`text-xs font-bold shrink-0 ${
+                  imp.impact_direction === "bullish" ? "text-green-400" :
+                  imp.impact_direction === "bearish" ? "text-red-400" : "text-gray-400"
+                }`}>
+                  {imp.impact_direction === "bullish" ? "\u25B2" : imp.impact_direction === "bearish" ? "\u25BC" : "\u2013"}
+                </span>
+                <span className="text-sm flex-1 min-w-0 line-clamp-1 text-gray-300">{imp.title}</span>
+                {imp.reason && (
+                  <span className="text-xs text-gray-500 shrink-0 max-w-[200px] truncate">{imp.reason}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* AI 분석 리포트 */}
       {analysis ? (
         <div className="space-y-6">
@@ -496,6 +557,9 @@ export default function StockDetailPage() {
                         article.title ?? "제목 없음"
                       )}
                     </p>
+                    {article.impact_summary && (
+                      <p className="text-xs text-gray-400 mt-1 line-clamp-1">{article.impact_summary}</p>
+                    )}
                     <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
                       <span className="font-medium text-gray-400">{article.source ?? "-"}</span>
                       <span>|</span>

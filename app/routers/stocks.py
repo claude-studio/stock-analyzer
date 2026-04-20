@@ -21,6 +21,7 @@ from app.analysis.accuracy import get_accuracy_stats
 from app.service.db_service import (
     get_daily_prices,
     get_latest_analysis,
+    get_news_detail,
     get_news_impact_summary,
     get_recent_news,
     get_recent_news_with_stock,
@@ -123,6 +124,21 @@ async def list_news(
         session, stock_id=stock_id, ticker=ticker if not stock_id else None, limit=limit,
     )
     return {"news": news, "total": len(news)}
+
+
+@router.get("/news/{news_id}")
+async def get_news_detail_endpoint(
+    news_id: int,
+    session: DbSession,
+) -> dict[str, Any]:
+    """뉴스 상세 조회 (영향 분석 포함)."""
+    detail = await get_news_detail(session, news_id)
+    if not detail:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"뉴스를 찾을 수 없습니다: {news_id}",
+        )
+    return detail
 
 
 @router.get("/stocks/{ticker}/technical")

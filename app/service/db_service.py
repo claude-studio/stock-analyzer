@@ -376,6 +376,52 @@ async def get_news_impact_summary(
     }
 
 
+async def get_news_detail(
+    session: AsyncSession,
+    news_id: int,
+) -> dict | None:
+    """뉴스 상세 조회 (영향 분석 포함)."""
+    query = (
+        select(NewsArticle)
+        .outerjoin(Stock, NewsArticle.stock_id == Stock.id)
+        .options(
+            selectinload(NewsArticle.stock),
+            selectinload(NewsArticle.stock_impacts).selectinload(NewsStockImpact.stock),
+        )
+        .where(NewsArticle.id == news_id)
+    )
+    result = await session.execute(query)
+    article = result.scalar_one_or_none()
+    if not article:
+        return None
+
+    return {
+        "id": article.id,
+        "title": article.title,
+        "source": article.source,
+        "url": article.url,
+        "published_at": str(article.published_at) if article.published_at else None,
+        "sentiment_score": float(article.sentiment_score) if article.sentiment_score is not None else None,
+        "sentiment_label": article.sentiment_label,
+        "news_category": article.news_category,
+        "impact_summary": article.impact_summary,
+        "sector": article.sector,
+        "impact_score": float(article.impact_score) if article.impact_score is not None else None,
+        "stock_ticker": article.stock.ticker if article.stock else None,
+        "stock_name": article.stock.name if article.stock else None,
+        "impacts": [
+            {
+                "stock_ticker": imp.stock.ticker if imp.stock else None,
+                "stock_name": imp.stock.name if imp.stock else None,
+                "impact_direction": imp.impact_direction,
+                "impact_score": float(imp.impact_score) if imp.impact_score is not None else None,
+                "reason": imp.reason,
+            }
+            for imp in article.stock_impacts
+        ],
+    }
+
+
 async def get_recent_news(
     session: AsyncSession,
     stock_id: int | None = None,

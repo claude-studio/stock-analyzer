@@ -74,6 +74,7 @@ export interface HealthStatus {
 }
 
 export interface NewsArticle {
+  id?: number;
   title: string;
   source: string;
   url: string | null;
@@ -82,6 +83,34 @@ export interface NewsArticle {
   sentiment_label: string | null;
   stock_ticker: string | null;
   stock_name: string | null;
+  news_category?: string | null;
+  impact_summary?: string | null;
+  sector?: string | null;
+  impact_score?: number | null;
+  impacts?: NewsImpact[];
+}
+
+export interface NewsImpact {
+  stock_ticker: string;
+  stock_name: string;
+  impact_direction: string;
+  impact_score: number | null;
+  reason: string | null;
+}
+
+export interface NewsImpactSummary {
+  ticker: string;
+  total_news: number;
+  bullish_count: number;
+  bearish_count: number;
+  neutral_count: number;
+  avg_impact_score: number;
+  recent_impacts: {
+    title: string;
+    impact_direction: string;
+    reason: string;
+    published_at: string;
+  }[];
 }
 
 export interface TechnicalIndicators {
@@ -108,4 +137,19 @@ export interface WatchlistItem {
   volume: number | null;
   recommendation: string | null;
   analysis_date: string | null;
+}
+
+export async function fetchNewsDetail(
+  newsId: number,
+): Promise<NewsArticle> {
+  return fetchAPI<NewsArticle>(`/api/v1/news/${newsId}`);
+}
+
+export async function fetchNewsImpactSummary(
+  ticker: string,
+  days: number = 7,
+): Promise<NewsImpactSummary> {
+  return fetchAPI<NewsImpactSummary>(
+    `/api/v1/stocks/${ticker}/news-impact?days=${days}`,
+  );
 }
