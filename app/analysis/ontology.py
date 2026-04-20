@@ -504,7 +504,17 @@ async def seed_from_ftc(session: AsyncSession) -> int:
         return 0
 
     now = datetime.now(tz=KST)
-    year = str(now.year - 1) if now.month <= 5 else str(now.year)
+    # 가장 최근 데이터 연도를 역순 탐색
+    group_members: dict[str, set[str]] = {}
+    year = None
+    for y in range(now.year, now.year - 4, -1):
+        group_members = await asyncio.to_thread(_fetch_ftc_all_members_sync, str(y))
+        if group_members:
+            year = str(y)
+            break
+    if not group_members:
+        logger.info("ftc_no_data_found")
+        return 0
 
     # 전체 종목 name -> id 매핑
     name_result = await session.execute(
@@ -518,11 +528,6 @@ async def seed_from_ftc(session: AsyncSession) -> int:
         stock = await get_stock_by_ticker(session, ticker)
         if stock:
             watchlist_stocks[stock.id] = stock.name
-
-    # 공정위 데이터 조회
-    group_members = await asyncio.to_thread(_fetch_ftc_all_members_sync, year)
-    if not group_members:
-        return 0
 
     seeded = 0
     for group_name, members in group_members.items():
