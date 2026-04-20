@@ -163,12 +163,12 @@ def _collect_dart_affiliates_sync(corp_code: str, corp_name: str) -> list[dict]:
 
     if df is not None and not df.empty:
         for _, row in df.iterrows():
-            target_name = str(row.get("inv_prm", row.get("법인명", ""))).strip()
+            target_name = str(row.get("inv_prm", "")).strip()
             if not target_name or target_name == corp_name:
                 continue
 
-            # 지분율 파싱
-            pct_raw = row.get("owne_prti", row.get("지분율", row.get("소유비율", None)))
+            # 지분율: trmend_blce_qota_rt (기말잔액 지분율)
+            pct_raw = row.get("trmend_blce_qota_rt", row.get("bsis_blce_qota_rt", None))
             pct = _parse_pct(pct_raw)
             if pct is None or pct < 5.0:
                 continue
