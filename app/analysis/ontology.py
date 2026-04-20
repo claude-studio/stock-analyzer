@@ -142,14 +142,14 @@ def _collect_dart_affiliates_sync(corp_code: str, corp_name: str) -> list[dict]:
     if dart is None:
         return []
 
-    year = datetime.now(tz=KST).year - 1
+    # 사업보고서는 익년 3월에 제출되므로, 4월 이전이면 2년 전 데이터 사용
+    now = datetime.now(tz=KST)
+    year = now.year - 1 if now.month >= 4 else now.year - 2
     results: list[dict] = []
 
     # report()로 타법인출자 현황 시도
     report_keys = [
-        "타법인 출자 현황",
-        "타법인출자 현황(상세)",
-        "타법인출자현황(상세)",
+        "타법인출자",
     ]
     df = None
     for key_nm in report_keys:
