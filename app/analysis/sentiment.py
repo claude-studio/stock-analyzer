@@ -14,19 +14,25 @@ from app.database.models import NewsArticle
 
 logger = structlog.get_logger(__name__)
 
-SENTIMENT_PROMPT = """다음 금융 뉴스 헤드라인들의 감성을 분석해주세요.
+SENTIMENT_PROMPT = """다음 금융 뉴스 헤드라인들을 분석해주세요.
 
-각 헤드라인에 대해 JSON 배열로만 응답하세요. 다른 텍스트 없이 JSON만 출력하세요.
+각 헤드라인에 대해 (1) 감성, (2) 직접 영향을 받는 종목/섹터를 분석하세요.
+JSON 배열로만 응답하세요. 다른 텍스트 없이 JSON만 출력하세요.
 
 형식:
 [
-  {"index": 0, "sentiment": "positive", "score": 0.85},
-  {"index": 1, "sentiment": "negative", "score": 0.72},
+  {"index": 0, "sentiment": "positive", "score": 0.85, "tickers": ["005930"], "names": ["삼성전자"], "sector": "반도체", "impact": "1분기 실적 호조로 주가 상승 기대"},
+  {"index": 1, "sentiment": "negative", "score": 0.72, "tickers": [], "names": ["카카오"], "sector": "플랫폼", "impact": "규제 강화로 수익성 악화 우려"},
   ...
 ]
 
-sentiment는 반드시 "positive", "negative", "neutral" 중 하나.
-score는 해당 감성의 확신도 (0.0~1.0).
+규칙:
+- sentiment: "positive", "negative", "neutral" 중 하나
+- score: 해당 감성의 확신도 (0.0~1.0)
+- tickers: 직접 언급되거나 영향 받는 종목코드 (없으면 빈 배열)
+- names: 직접 언급되거나 영향 받는 종목명 (없으면 빈 배열)
+- sector: 관련 섹터 (없으면 빈 문자열)
+- impact: 해당 뉴스가 주식시장에 미치는 영향 한 줄 요약 (없으면 빈 문자열)
 
 헤드라인 목록:
 """

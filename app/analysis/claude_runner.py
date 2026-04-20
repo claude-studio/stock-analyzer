@@ -109,12 +109,33 @@ class ClaudeRunner:
 
         if output_format == "json":
             try:
-                return json.loads(raw_output)
+                parsed = json.loads(raw_output)
             except json.JSONDecodeError as e:
                 logger.warning("claude_cli_json_parse_failed", error=str(e))
                 raise RuntimeError(
                     f"Claude CLI JSON 파싱 실패: {e}"
                 ) from e
+
+            # Claude CLI --output-format json은 래퍼 객체를 반환:
+            # {"type": "result", "result": "<실제 응답 문자열>", ...}
+            if isinstance(parsed, dict) and parsed.get("type") == "result":
+                inner = parsed.get("result", "")
+                if isinstance(inner, str):
+                    try:
+                        return json.loads(inner)
+                    except json.JSONDecodeError:
+                        return inner
+                return inner
+
+            return parsed
+
+        # text 모드에서도 래퍼 객체가 올 수 있음
+        try:
+            parsed = json.loads(raw_output)
+            if isinstance(parsed, dict) and parsed.get("type") == "result":
+                return str(parsed.get("result", raw_output))
+        except (json.JSONDecodeError, ValueError):
+            pass
 
         return raw_output
 

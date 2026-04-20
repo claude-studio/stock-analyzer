@@ -200,6 +200,27 @@ async def job_news_collect() -> None:
                                     session, article_ids, sentiments,
                                 )
                                 logger.info("sentiment_analysis_done", updated=sentiment_count)
+
+                                # LLM이 추출한 종목명으로 미매칭 기사 stock_id 보강
+                                from app.utils.stock_matcher import StockMatcher
+                                llm_matcher = StockMatcher(full_map)
+                                for s_item in sentiments:
+                                    s_idx = s_item.get("index", -1)
+                                    if s_idx < 0 or s_idx >= len(article_ids):
+                                        continue
+                                    aid = article_ids[s_idx]
+                                    llm_names = s_item.get("names", [])
+                                    if not llm_names:
+                                        continue
+                                    for lname in llm_names:
+                                        matched = llm_matcher.match(lname)
+                                        if matched:
+                                            await session.execute(
+                                                update(NewsArticle)
+                                                .where(NewsArticle.id == aid, NewsArticle.stock_id.is_(None))
+                                                .values(stock_id=matched[0])
+                                            )
+                                            break
                 except Exception:
                     logger.warning("sentiment_analysis_failed", exc_info=True)
 
