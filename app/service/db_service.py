@@ -17,6 +17,7 @@ from app.database.models import (
     CollectionLog,
     DailyPrice,
     NewsArticle,
+    NewsStockImpact,
     Stock,
 )
 
@@ -285,6 +286,96 @@ async def upsert_news_articles(
     return len(rows)
 
 
+async def save_news_impact(
+    session: AsyncSession,
+    news_article_id: int,
+    stock_id: int,
+    impact_direction: str,
+    impact_score: float | None,
+    reason: str | None,
+) -> None:
+    """뉴스-종목 영향 매핑 저장 (upsert)."""
+    score_decimal = Decimal(str(round(impact_score, 3))) if impact_score is not None else None
+    stmt = pg_insert(NewsStockImpact).values(
+        news_article_id=news_article_id,
+        stock_id=stock_id,
+        impact_direction=impact_direction,
+        impact_score=score_decimal,
+        reason=reason[:500] if reason else None,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["news_article_id", "stock_id"],
+        set_={
+            "impact_direction": stmt.excluded.impact_direction,
+            "impact_score": stmt.excluded.impact_score,
+            "reason": stmt.excluded.reason,
+        },
+    )
+    await session.execute(stmt)
+
+
+async def get_news_impact_summary(
+    session: AsyncSession,
+    stock_id: int,
+    days: int = 7,
+) -> dict:
+    """종목별 뉴스 영향 요약 (최근 N일)."""
+    from datetime import timedelta
+
+    cutoff = datetime.now(tz=KST) - timedelta(days=days)
+
+    stmt = (
+        select(NewsStockImpact, NewsArticle.title, NewsArticle.published_at)
+        .join(NewsArticle, NewsStockImpact.news_article_id == NewsArticle.id)
+        .where(
+            NewsStockImpact.stock_id == stock_id,
+            NewsArticle.published_at >= cutoff,
+        )
+        .order_by(NewsArticle.published_at.desc())
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    bullish_count = 0
+    bearish_count = 0
+    neutral_count = 0
+    scores: list[float] = []
+    reasons: list[dict] = []
+
+    for impact, title, published_at in rows:
+        if impact.impact_direction == "bullish":
+            bullish_count += 1
+        elif impact.impact_direction == "bearish":
+            bearish_count += 1
+        else:
+            neutral_count += 1
+
+        if impact.impact_score is not None:
+            scores.append(float(impact.impact_score))
+
+        if impact.reason:
+            reasons.append({
+                "title": title,
+                "direction": impact.impact_direction,
+                "score": float(impact.impact_score) if impact.impact_score is not None else None,
+                "reason": impact.reason,
+                "published_at": str(published_at) if published_at else None,
+            })
+
+    avg_score = sum(scores) / len(scores) if scores else 0.0
+
+    return {
+        "stock_id": stock_id,
+        "days": days,
+        "bullish_count": bullish_count,
+        "bearish_count": bearish_count,
+        "neutral_count": neutral_count,
+        "total_count": len(rows),
+        "avg_impact_score": round(avg_score, 3),
+        "recent_impacts": reasons[:10],
+    }
+
+
 async def get_recent_news(
     session: AsyncSession,
     stock_id: int | None = None,
@@ -305,11 +396,14 @@ async def get_recent_news_with_stock(
     ticker: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
-    """뉴스 + 종목 정보 조인 조회."""
+    """뉴스 + 종목 정보 + 영향 분석 조인 조회."""
     query = (
         select(NewsArticle)
         .outerjoin(Stock, NewsArticle.stock_id == Stock.id)
-        .options(selectinload(NewsArticle.stock))
+        .options(
+            selectinload(NewsArticle.stock),
+            selectinload(NewsArticle.stock_impacts).selectinload(NewsStockImpact.stock),
+        )
     )
     if stock_id:
         query = query.where(NewsArticle.stock_id == stock_id)
@@ -327,8 +421,21 @@ async def get_recent_news_with_stock(
             "published_at": str(a.published_at) if a.published_at else None,
             "sentiment_score": float(a.sentiment_score) if a.sentiment_score is not None else None,
             "sentiment_label": a.sentiment_label,
+            "news_category": a.news_category,
+            "impact_summary": a.impact_summary,
+            "sector": a.sector,
             "stock_ticker": a.stock.ticker if a.stock else None,
             "stock_name": a.stock.name if a.stock else None,
+            "impacts": [
+                {
+                    "stock_ticker": imp.stock.ticker if imp.stock else None,
+                    "stock_name": imp.stock.name if imp.stock else None,
+                    "impact_direction": imp.impact_direction,
+                    "impact_score": float(imp.impact_score) if imp.impact_score is not None else None,
+                    "reason": imp.reason,
+                }
+                for imp in a.stock_impacts
+            ],
         }
         for a in articles
     ]

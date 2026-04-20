@@ -79,7 +79,37 @@ class NewsArticle(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    news_category: Mapped[str | None] = mapped_column(String(20))
+    impact_summary: Mapped[str | None] = mapped_column(Text)
+    sector: Mapped[str | None] = mapped_column(String(30))
+    impact_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+
     stock: Mapped["Stock | None"] = relationship(back_populates="news_articles")
+    stock_impacts: Mapped[list["NewsStockImpact"]] = relationship(
+        back_populates="news_article", cascade="all, delete-orphan"
+    )
+
+
+class NewsStockImpact(Base):
+    """뉴스-종목 영향 분석 매핑 (M:N)."""
+
+    __tablename__ = "news_stock_impacts"
+    __table_args__ = (
+        Index("ix_news_stock_impacts_news_stock", "news_article_id", "stock_id", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    news_article_id: Mapped[int] = mapped_column(ForeignKey("news_articles.id", ondelete="CASCADE"))
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id", ondelete="CASCADE"))
+    impact_direction: Mapped[str] = mapped_column(String(10))
+    impact_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    news_article: Mapped["NewsArticle"] = relationship(back_populates="stock_impacts")
+    stock: Mapped["Stock"] = relationship()
 
 
 class AnalysisReport(Base):

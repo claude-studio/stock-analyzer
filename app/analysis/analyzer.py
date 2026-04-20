@@ -96,7 +96,14 @@ def _build_news_summary(news_list: list[dict]) -> str:
     for news in news_list[:5]:
         title = news.get("title", "")
         sentiment = news.get("sentiment", "")
-        lines.append(f"- {title} (감성: {sentiment})")
+        score = news.get("score", 0.0)
+        impact = news.get("impact", "")
+        category = news.get("category", "")
+
+        category_tag = f"[{category}] " if category else ""
+        score_str = f" {score:+.2f}" if score else ""
+        impact_str = f" | 영향: {impact}" if impact else ""
+        lines.append(f"- {category_tag}{title} (감성: {sentiment}{score_str}){impact_str}")
     return "\n".join(lines)
 
 

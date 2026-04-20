@@ -21,6 +21,7 @@ from app.analysis.accuracy import get_accuracy_stats
 from app.service.db_service import (
     get_daily_prices,
     get_latest_analysis,
+    get_news_impact_summary,
     get_recent_news,
     get_recent_news_with_stock,
     get_stock_by_ticker,
@@ -251,6 +252,24 @@ async def get_stock_analysis(ticker: str, session: DbSession) -> dict[str, Any]:
     }
 
 
+@router.get("/stocks/{ticker}/news-impact")
+async def get_stock_news_impact(
+    ticker: str,
+    session: DbSession,
+    days: int = Query(default=7, ge=1, le=90, description="조회 기간 (일)"),
+) -> dict[str, Any]:
+    """종목별 뉴스 영향 분석 요약."""
+    stock = await get_stock_by_ticker(session, ticker)
+    if not stock:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"종목을 찾을 수 없습니다: {ticker}",
+        )
+
+    summary = await get_news_impact_summary(session, stock.id, days=days)
+    return {"ticker": ticker, "name": stock.name, **summary}
+
+
 @router.get("/stocks/{ticker}/detail")
 async def get_stock_detail(ticker: str, session: DbSession) -> dict[str, Any]:
     """종목 상세 정보 (프론트엔드 종목 페이지용 통합 API)."""
@@ -309,6 +328,8 @@ async def get_stock_detail(ticker: str, session: DbSession) -> dict[str, Any]:
                 "published_at": str(n.published_at) if n.published_at else None,
                 "sentiment_label": n.sentiment_label,
                 "sentiment_score": _decimal_to_float(n.sentiment_score),
+                "news_category": n.news_category,
+                "impact_summary": n.impact_summary,
             }
             for n in news
         ],

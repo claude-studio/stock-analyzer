@@ -198,10 +198,11 @@ async def job_news_collect() -> None:
                             if article_ids:
                                 sentiment_count = await update_news_sentiment(
                                     session, article_ids, sentiments,
+                                    stock_name_map=full_map,
                                 )
                                 logger.info("sentiment_analysis_done", updated=sentiment_count)
 
-                                # LLM이 추출한 종목명으로 미매칭 기사 stock_id 보강
+                                # LLM이 추출한 종목명으로 미매칭 기사 stock_id 보강 (첫 번째 매칭 종목)
                                 from app.utils.stock_matcher import StockMatcher
                                 llm_matcher = StockMatcher(full_map)
                                 for s_item in sentiments:
@@ -346,7 +347,13 @@ async def job_claude_analysis() -> None:
                         for p in prices
                     ])
                     news_list = [
-                        {"title": n.title, "sentiment": n.sentiment_label or ""}
+                        {
+                            "title": n.title,
+                            "sentiment": n.sentiment_label or "",
+                            "score": float(n.sentiment_score) if n.sentiment_score else 0.0,
+                            "impact": n.impact_summary or "",
+                            "category": n.news_category or "",
+                        }
                         for n in news
                     ]
 
