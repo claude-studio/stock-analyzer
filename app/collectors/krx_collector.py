@@ -5,7 +5,7 @@ import time
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-import FinanceDataReader as fdr
+import FinanceDataReader
 import pandas as pd
 import structlog
 from pykrx import stock as pykrx_stock
@@ -67,13 +67,55 @@ async def collect_krx_ohlcv(target_date: date | None = None) -> pd.DataFrame:
     return await asyncio.to_thread(_collect_krx_ohlcv_sync, target_date)
 
 
+def _collect_krx_index_ohlcv_sync(target_date: date) -> pd.DataFrame:
+    """KOSPI/KOSDAQ 지수 일봉을 종목 OHLCV와 같은 형태로 수집한다."""
+    if not is_krx_trading_day(target_date):
+        logger.info("krx_index_ohlcv_skip_non_trading_day", date=str(target_date))
+        return pd.DataFrame()
+
+    date_str = target_date.strftime("%Y%m%d")
+    rows = []
+    for ticker, index_code in {"KOSPI": "1001", "KOSDAQ": "2001"}.items():
+        try:
+            df = pykrx_stock.get_index_ohlcv_by_date(date_str, date_str, index_code)
+        except (ConnectionError, TimeoutError, OSError, ValueError, KeyError) as exc:
+            logger.warning("krx_index_ohlcv_failed", ticker=ticker, error=str(exc))
+            continue
+        if df.empty:
+            continue
+        row = df.iloc[-1]
+        rows.append(
+            {
+                "ticker": ticker,
+                "시가": row.get("시가", row.get("Open", 0)),
+                "고가": row.get("고가", row.get("High", 0)),
+                "저가": row.get("저가", row.get("Low", 0)),
+                "종가": row.get("종가", row.get("Close", 0)),
+                "거래량": int(row.get("거래량", row.get("Volume", 0)) or 0),
+                "date": target_date,
+            }
+        )
+    if not rows:
+        return pd.DataFrame()
+    result = pd.DataFrame(rows).set_index("ticker")
+    logger.info("krx_index_ohlcv_collected", rows=len(result))
+    return result
+
+
+async def collect_krx_index_ohlcv(target_date: date | None = None) -> pd.DataFrame:
+    """KOSPI/KOSDAQ 벤치마크 일봉을 수집한다."""
+    if target_date is None:
+        target_date = datetime.now(tz=KST).date()
+    return await asyncio.to_thread(_collect_krx_index_ohlcv_sync, target_date)
+
+
 def _collect_stock_listing_sync() -> pd.DataFrame:
     """KRX 상장 종목 목록을 동기로 수집한다."""
     logger.info("krx_stock_listing_collecting")
 
     for attempt in range(_MAX_RETRIES):
         try:
-            df = fdr.StockListing("KRX")
+            df = FinanceDataReader.StockListing("KRX")
             logger.info("krx_stock_listing_collected", rows=len(df))
             return df
         except (ConnectionError, TimeoutError, OSError) as exc:

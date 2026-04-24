@@ -8,38 +8,51 @@ import pandas as pd
 import structlog
 from sqlalchemy import select, update
 
-from app.analysis.analyzer import run_multi_analysis, run_stock_analysis
 from app.analysis.accuracy import evaluate_past_analyses
-from app.analysis.reflection import run_weekly_reflection
+from app.analysis.analyzer import run_multi_analysis
 from app.analysis.claude_runner import ClaudeRunner
+from app.analysis.reflection import run_weekly_reflection
 from app.analysis.sentiment import analyze_sentiment_batch, update_news_sentiment
 from app.analysis.technical import calculate_technical_indicators
-from app.collectors.dart_collector import collect_today_disclosures, collect_fundamentals_for_watchlist
-from app.collectors.krx_collector import collect_krx_ohlcv, collect_investor_trading, collect_stock_listing
+from app.collectors.dart_collector import (
+    collect_fundamentals_for_watchlist,
+    collect_today_disclosures,
+)
+from app.collectors.krx_collector import (
+    collect_investor_trading,
+    collect_krx_index_ohlcv,
+    collect_krx_ohlcv,
+    collect_stock_listing,
+)
 from app.collectors.news_collector import collect_rss_news
 from app.collectors.us_collector import collect_us_ohlcv
 from app.core.config import settings
-from app.database.models import DailyPrice, NewsArticle, Stock
+from app.database.models import DailyPrice, NewsArticle
 from app.database.session import async_session_factory
 from app.service.db_service import (
     bulk_insert_daily_prices,
+    ensure_benchmark_stocks,
     get_daily_prices,
     get_recent_news,
     get_stock_by_ticker,
     get_stock_id_map,
     get_stock_name_map,
     log_collection,
+    refresh_news_observed_reactions,
     save_analysis_report,
     upsert_news_articles,
     upsert_stocks,
 )
 from app.utils.alerting import notify_failure, notify_success
-from app.utils.market_calendar import is_krx_trading_day, is_nyse_trading_day
 from app.utils.discord import send_analysis_alert, send_market_summary
+from app.utils.market_calendar import is_krx_trading_day, is_nyse_trading_day
 
 logger = structlog.get_logger(__name__)
 KST = ZoneInfo("Asia/Seoul")
-DISCLAIMER = "이 분석은 정보 제공 목적이며 투자 권유가 아닙니다. 투자 의사결정의 최종 책임은 사용자에게 있습니다."
+DISCLAIMER = (
+    "이 분석은 정보 제공 목적이며 투자 권유가 아닙니다. "
+    "투자 의사결정의 최종 책임은 사용자에게 있습니다."
+)
 
 
 
@@ -96,13 +109,21 @@ async def job_krx_close() -> None:
         today = date.today()
         today_str = today.strftime("%Y%m%d")
         data = await collect_krx_ohlcv()
+        index_data = await collect_krx_index_ohlcv(today)
         data["date"] = today
         async with async_session_factory() as session:
+            await ensure_benchmark_stocks(session)
             stock_id_map = await get_stock_id_map(session)
             count = await bulk_insert_daily_prices(session, data, stock_id_map, market="KRX")
+            benchmark_count = await bulk_insert_daily_prices(
+                session,
+                index_data,
+                stock_id_map,
+                market="KRX_INDEX",
+            )
 
             # M2: 관심 종목 수급 데이터 수집
-            for ticker in settings.KR_WATCHLIST:
+            for ticker in settings.kr_watchlist:
                 try:
                     inv_data = await collect_investor_trading(ticker, today_str, today_str)
                     if not inv_data.empty:
@@ -135,7 +156,7 @@ async def job_krx_close() -> None:
                 started_at=started_at,
                 completed_at=completed_at,
                 target_date=today,
-                stocks_count=count,
+                stocks_count=count + benchmark_count,
             )
             await session.commit()
         logger.info(
@@ -144,7 +165,7 @@ async def job_krx_close() -> None:
             started_at=started_at.isoformat(),
             completed_at=completed_at.isoformat(),
             elapsed_seconds=(completed_at - started_at).total_seconds(),
-            stocks_count=count,
+            stocks_count=count + benchmark_count,
         )
     except Exception as exc:
         logger.exception("job_failed", job="krx_close")
@@ -185,7 +206,7 @@ async def job_news_collect() -> None:
                     try:
                         from app.analysis.ontology import build_relation_context_for_watchlist
                         relation_ctx = await build_relation_context_for_watchlist(
-                            session, settings.KR_WATCHLIST,
+                            session, settings.kr_watchlist,
                         )
                     except Exception:
                         logger.warning("relation_context_load_failed", exc_info=True)
@@ -215,7 +236,7 @@ async def job_news_collect() -> None:
                                 )
                                 logger.info("sentiment_analysis_done", updated=sentiment_count)
 
-                                # LLM이 추출한 종목명으로 미매칭 기사 stock_id 보강 (첫 번째 매칭 종목)
+                                # LLM 추출 종목명으로 미매칭 기사 stock_id 보강
                                 from app.utils.stock_matcher import StockMatcher
                                 llm_matcher = StockMatcher(full_map)
                                 for s_item in sentiments:
@@ -231,12 +252,21 @@ async def job_news_collect() -> None:
                                         if matched:
                                             await session.execute(
                                                 update(NewsArticle)
-                                                .where(NewsArticle.id == aid, NewsArticle.stock_id.is_(None))
+                                                .where(
+                                                    NewsArticle.id == aid,
+                                                    NewsArticle.stock_id.is_(None),
+                                                )
                                                 .values(stock_id=matched[0])
                                             )
                                             break
                 except Exception:
                     logger.warning("sentiment_analysis_failed", exc_info=True)
+
+            try:
+                reaction_stats = await refresh_news_observed_reactions(session, days=90)
+                logger.info("news_observed_reactions_done", **reaction_stats)
+            except Exception:
+                logger.warning("news_observed_reactions_failed", exc_info=True)
 
             completed_at = datetime.now(tz=KST)
             await log_collection(
@@ -329,7 +359,7 @@ async def job_claude_analysis() -> None:
         # B4: DART 재무 데이터 수집
         fundamentals_map: dict[str, dict] = {}
         try:
-            fundamentals_map = await collect_fundamentals_for_watchlist(settings.KR_WATCHLIST)
+            fundamentals_map = await collect_fundamentals_for_watchlist(settings.kr_watchlist)
             logger.info("fundamentals_collected", count=len(fundamentals_map))
         except Exception:
             logger.warning("fundamentals_collect_failed", exc_info=True)
@@ -382,7 +412,9 @@ async def job_claude_analysis() -> None:
                     fund = fundamentals_map.get(ticker, {})
                     fund_text = ""
                     if fund:
-                        fund_text = "\n".join(f"- {k}: {v}" for k, v in fund.items() if v is not None)
+                        fund_text = "\n".join(
+                            f"- {k}: {v}" for k, v in fund.items() if v is not None
+                        )
 
                     # 관계 컨텍스트 로드
                     rel_ctx = ""
@@ -446,7 +478,7 @@ async def job_claude_analysis() -> None:
                         except Exception:
                             logger.warning("discord_alert_failed", ticker=ticker, exc_info=True)
 
-        tasks = [_analyze_ticker(t) for t in settings.KR_WATCHLIST]
+        tasks = [_analyze_ticker(t) for t in settings.kr_watchlist]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         success_count = 0
@@ -458,7 +490,7 @@ async def job_claude_analysis() -> None:
             else:
                 success_count += 1
 
-        total = len(settings.KR_WATCHLIST)
+        total = len(settings.kr_watchlist)
         if success_count == 0 and fail_count > 0:
             status = "failure"
         elif fail_count > 0 and success_count < total * 0.5:
@@ -518,9 +550,11 @@ async def job_us_close() -> None:
             logger.info("job_skipped", job="us_close", reason="not_trading_day")
             return
         today = date.today()
-        data = await collect_us_ohlcv(settings.US_WATCHLIST)
+        us_tickers = sorted({*settings.us_watchlist, "SPY"})
+        data = await collect_us_ohlcv(us_tickers)
         data["date"] = today
         async with async_session_factory() as session:
+            await ensure_benchmark_stocks(session)
             stock_id_map = await get_stock_id_map(session)
             count = await bulk_insert_daily_prices(session, data, stock_id_map, market="US")
             completed_at = datetime.now(tz=KST)
@@ -570,7 +604,7 @@ async def job_market_summary() -> None:
         today = date.today()
         recommendations_summary: list[str] = []
         async with async_session_factory() as session:
-            for ticker in settings.KR_WATCHLIST:
+            for ticker in settings.kr_watchlist:
                 stock = await get_stock_by_ticker(session, ticker)
                 if not stock:
                     continue
@@ -599,7 +633,11 @@ async def job_market_summary() -> None:
             ) or "주요 뉴스 없음"
 
         kr_data = market_context
-        rec_text = "\n".join(recommendations_summary) if recommendations_summary else "분석 결과 없음"
+        rec_text = (
+            "\n".join(recommendations_summary)
+            if recommendations_summary
+            else "분석 결과 없음"
+        )
         kr_data_full = f"{kr_data}\n\n### 관심종목 분석 결과\n{rec_text}"
 
         prompt = build_market_summary_prompt(
@@ -708,7 +746,7 @@ async def job_dart_collect() -> None:
         disclosures = await collect_today_disclosures()
         logger.info("dart_disclosures_result", count=len(disclosures))
 
-        fundamentals = await collect_fundamentals_for_watchlist(settings.KR_WATCHLIST)
+        fundamentals = await collect_fundamentals_for_watchlist(settings.kr_watchlist)
         logger.info("dart_fundamentals_result", count=len(fundamentals))
 
         completed_at = datetime.now(tz=KST)
@@ -757,7 +795,7 @@ async def job_weekly_reflection() -> None:
             timeout=settings.CLAUDE_TIMEOUT,
         )
         async with async_session_factory() as session:
-            summary = await run_weekly_reflection(runner, session)
+            await run_weekly_reflection(runner, session)
             await session.commit()
 
         completed_at = datetime.now(tz=KST)
@@ -804,7 +842,12 @@ async def job_seed_relations() -> dict[str, int]:
     Returns:
         {"sector_map": int, "dart": int, "llm": int} 각 소스별 생성 건수
     """
-    from app.analysis.ontology import seed_from_dart, seed_from_ftc, seed_from_llm, seed_sector_peers
+    from app.analysis.ontology import (
+        seed_from_dart,
+        seed_from_ftc,
+        seed_from_llm,
+        seed_sector_peers,
+    )
 
     started_at = datetime.now(tz=KST)
     logger.info("job_started", job="seed_relations", started_at=started_at.isoformat())
@@ -820,7 +863,7 @@ async def job_seed_relations() -> dict[str, int]:
             logger.info("ftc_affiliates_seeded", count=counts["ftc"])
 
             # Step 3: DART 타법인출자 (지분 투자 관계)
-            counts["dart"] = await seed_from_dart(session, settings.KR_WATCHLIST)
+            counts["dart"] = await seed_from_dart(session, settings.kr_watchlist)
             logger.info("dart_affiliates_seeded", count=counts["dart"])
 
             # Step 4: Claude 보충 (경쟁사/공급망 -- 공식 데이터로 커버 안 되는 관계만)
@@ -828,7 +871,7 @@ async def job_seed_relations() -> dict[str, int]:
                 claude_path=settings.CLAUDE_PATH,
                 timeout=settings.CLAUDE_TIMEOUT,
             )
-            counts["llm"] = await seed_from_llm(session, runner, settings.KR_WATCHLIST)
+            counts["llm"] = await seed_from_llm(session, runner, settings.kr_watchlist)
             logger.info("llm_relations_seeded", count=counts["llm"])
 
             await session.commit()

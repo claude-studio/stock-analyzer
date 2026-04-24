@@ -1,6 +1,5 @@
 """애플리케이션 설정 모듈."""
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,11 +22,11 @@ class Settings(BaseSettings):
     US_WATCHLIST_RAW: str = "SPY,QQQ,AAPL"
 
     @property
-    def KR_WATCHLIST(self) -> list[str]:
+    def kr_watchlist(self) -> list[str]:
         return [s.strip() for s in self.KR_WATCHLIST_RAW.split(",") if s.strip()]
 
     @property
-    def US_WATCHLIST(self) -> list[str]:
+    def us_watchlist(self) -> list[str]:
         return [s.strip() for s in self.US_WATCHLIST_RAW.split(",") if s.strip()]
 
 
