@@ -1,23 +1,10 @@
-const SERVER_API_URL = process.env.API_URL || "http://stock-api:8000";
-const CLIENT_API_URL = process.env.NEXT_PUBLIC_API_URL || "";
-const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
-
-function getBaseUrl(): string {
-  if (typeof window === "undefined") {
-    return SERVER_API_URL;
-  }
-  return CLIENT_API_URL;
-}
-
 export async function fetchAPI<T>(
   path: string,
   options?: RequestInit,
 ): Promise<T> {
-  const base = getBaseUrl();
-  const res = await fetch(`${base}${path}`, {
+  const res = await fetch(path, {
     ...options,
     headers: {
-      "X-API-Key": API_KEY,
       "Content-Type": "application/json",
       ...options?.headers,
     },
@@ -91,26 +78,48 @@ export interface NewsArticle {
 }
 
 export interface NewsImpact {
+  article_id?: number;
+  title?: string | null;
   stock_ticker: string;
   stock_name: string;
   impact_direction: string;
   impact_score: number | null;
   reason: string | null;
+  published_at?: string | null;
+  effective_trading_date?: string | null;
+  window?: string | null;
+  benchmark?: string | null;
+  stock_return?: number | null;
+  benchmark_return?: number | null;
+  abnormal_return?: number | null;
+  car?: number | null;
+  observed_windows?: {
+    window: string;
+    benchmark: string | null;
+    stock_return: number | null;
+    benchmark_return: number | null;
+    abnormal_return: number | null;
+    car: number | null;
+    confidence: number | null;
+    data_status: string;
+  }[];
+  confidence?: number | null;
+  confounded?: boolean;
+  data_status?: string | null;
+  marker_label?: string | null;
 }
 
 export interface NewsImpactSummary {
   ticker: string;
+  name?: string;
+  total_count?: number;
   total_news: number;
   bullish_count: number;
   bearish_count: number;
   neutral_count: number;
   avg_impact_score: number;
-  recent_impacts: {
-    title: string;
-    impact_direction: string;
-    reason: string;
-    published_at: string;
-  }[];
+  recent_impacts: NewsImpact[];
+  event_markers?: NewsImpact[];
 }
 
 export interface TechnicalIndicators {

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { createChart, CandlestickSeries } from "lightweight-charts";
-import type { IChartApi } from "lightweight-charts";
+import { createChart, CandlestickSeries, createSeriesMarkers } from "lightweight-charts";
+import type { IChartApi, SeriesMarker } from "lightweight-charts";
 
 interface CandlestickChartProps {
   data: {
@@ -12,11 +12,13 @@ interface CandlestickChartProps {
     low: number;
     close: number;
   }[];
+  markers?: SeriesMarker<string>[];
   height?: number;
 }
 
 export default function CandlestickChart({
   data,
+  markers = [],
   height = 400,
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +55,7 @@ export default function CandlestickChart({
     });
 
     series.setData(data);
+    createSeriesMarkers(series, markers);
     chart.timeScale().fitContent();
     chartRef.current = chart;
 
@@ -60,7 +63,7 @@ export default function CandlestickChart({
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, height]);
+  }, [data, height, markers]);
 
   return (
     <div

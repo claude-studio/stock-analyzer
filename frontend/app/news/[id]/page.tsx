@@ -40,6 +40,21 @@ function sentimentLabelText(score: number | null | undefined): string {
   return "중립";
 }
 
+function formatReturn(value: number | null | undefined): string {
+  if (value == null) return "-";
+  const pct = value * 100;
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+}
+
+function dataStatusText(status: string | null | undefined): string {
+  if (!status || status === "ok") return "관측 완료";
+  if (status === "raw_price_fallback") return "원시 종가 기준";
+  if (status === "benchmark_missing") return "벤치마크 없음";
+  if (status === "price_missing") return "가격 없음";
+  if (status === "insufficient_window") return "관측 기간 부족";
+  return status;
+}
+
 function SkeletonBlock({ className }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-gray-800 ${className ?? "h-28"}`} />;
 }
@@ -88,6 +103,21 @@ function ImpactCard({ impact }: { impact: NewsImpact }) {
         {impact.reason && (
           <p className="text-xs text-gray-400 mt-2 line-clamp-2">{impact.reason}</p>
         )}
+        <div className="mt-3 rounded-md border border-gray-800 bg-black/20 p-2 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-gray-500">관측 반응</span>
+            <span className={(impact.abnormal_return ?? 0) >= 0 ? "text-green-400" : "text-red-400"}>
+              {formatReturn(impact.abnormal_return)}
+            </span>
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-2 text-gray-500">
+            <span>{impact.effective_trading_date ?? "관측일 없음"}</span>
+            <span>{dataStatusText(impact.data_status)}</span>
+          </div>
+          {impact.confounded && (
+            <p className="mt-1 text-yellow-400">동일 세션 복합 이벤트</p>
+          )}
+        </div>
       </div>
     </Link>
   );
@@ -97,15 +127,14 @@ export default function NewsDetailPage() {
   const params = useParams();
   const router = useRouter();
   const newsId = Number(params.id);
+  const invalidNewsId = Number.isNaN(newsId);
 
   const [article, setArticle] = useState<NewsArticle | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isNaN(newsId)) {
-      setError("유효하지 않은 뉴스 ID");
-      setLoading(false);
+    if (invalidNewsId) {
       return;
     }
 
@@ -119,7 +148,23 @@ export default function NewsDetailPage() {
       .finally(() => {
         setLoading(false);
       });
-  }, [newsId]);
+  }, [invalidNewsId, newsId]);
+
+  if (invalidNewsId) {
+    return (
+      <div className="max-w-4xl mx-auto">
+        <div className="rounded-lg border border-gray-800 bg-[#111111] p-8 text-center">
+          <p className="text-sm text-gray-400">유효하지 않은 뉴스 ID</p>
+          <button
+            onClick={() => router.push("/news")}
+            className="mt-4 rounded-lg bg-gray-800 px-4 py-2 text-sm text-white hover:bg-gray-700 transition-colors"
+          >
+            뉴스 목록으로 돌아가기
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -291,6 +336,11 @@ export default function NewsDetailPage() {
             <p className="text-sm text-gray-400">분석된 영향 종목이 없습니다.</p>
           </div>
         )}
+      </div>
+
+      <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-xs leading-relaxed text-amber-100">
+        예상 영향은 뉴스 내용 기반 추정이고, 관측 반응은 일봉 기준 시장 대비 가격 움직임입니다.
+        두 값은 인과관계나 투자 권유를 의미하지 않으며 데이터는 지연·정정될 수 있습니다.
       </div>
     </div>
   );

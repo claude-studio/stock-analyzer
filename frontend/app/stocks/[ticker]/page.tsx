@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import { fetchAPI } from "@/lib/api";
 import type { Stock, AnalysisReport, DailyPrice, TechnicalIndicators, NewsArticle, NewsImpactSummary } from "@/lib/api";
 import { fetchNewsImpactSummary } from "@/lib/api";
@@ -17,6 +16,28 @@ function formatChangePct(val: number | null | undefined): string {
   if (val == null) return "-";
   const sign = val >= 0 ? "+" : "";
   return `${sign}${val.toFixed(2)}%`;
+}
+
+function formatReturn(val: number | null | undefined): string {
+  if (val == null) return "-";
+  const pct = val * 100;
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+}
+
+function dataStatusText(status: string | null | undefined): string {
+  if (!status || status === "ok") return "관측 완료";
+  if (status === "raw_price_fallback") return "원시 종가 기준";
+  if (status === "benchmark_missing") return "벤치마크 없음";
+  if (status === "price_missing") return "가격 없음";
+  if (status === "insufficient_window") return "관측 기간 부족";
+  return status;
+}
+
+function observedWindowReturn(
+  impact: NewsImpactSummary["recent_impacts"][number],
+  windowLabel: string,
+): number | null | undefined {
+  return impact.observed_windows?.find((item) => item.window === windowLabel)?.abnormal_return;
 }
 
 function changePctColor(val: number | null | undefined): string {
@@ -139,7 +160,7 @@ export default function StockDetailPage() {
         setStock(data?.stock ?? null);
         setAnalysis(data?.analysis ?? null);
         const prices = Array.isArray(data?.prices) ? data.prices : [];
-        setLatestPrice(prices.length > 0 ? prices[0] : null);
+        setLatestPrice(prices.length > 0 ? prices[prices.length - 1] : null);
         setNews(Array.isArray(data?.news) ? data.news.slice(0, 10) : []);
       })
       .catch(() => {
@@ -412,7 +433,7 @@ export default function StockDetailPage() {
       {/* 뉴스 영향 요약 */}
       {newsImpact && newsImpact.total_news > 0 && (
         <div>
-          <h2 className="text-lg font-semibold mb-4">최근 7일 뉴스 영향</h2>
+          <h2 className="text-lg font-semibold mb-4">최근 뉴스 영향과 관측 반응</h2>
           <div className="rounded-lg border border-[#1f1f1f] bg-[#111111] p-4">
             <div className="grid grid-cols-3 gap-3 mb-4">
               <div className="text-center">
@@ -442,7 +463,8 @@ export default function StockDetailPage() {
             )}
 
             {newsImpact.recent_impacts.slice(0, 5).map((imp, idx) => (
-              <div key={idx} className="flex items-center gap-2 py-2 border-t border-[#1f1f1f]">
+              <div key={idx} className="grid gap-2 py-3 border-t border-[#1f1f1f] md:grid-cols-[1fr_auto]">
+                <div className="flex items-center gap-2 min-w-0">
                 <span className={`text-xs font-bold shrink-0 ${
                   imp.impact_direction === "bullish" ? "text-green-400" :
                   imp.impact_direction === "bearish" ? "text-red-400" : "text-gray-400"
@@ -450,9 +472,18 @@ export default function StockDetailPage() {
                   {imp.impact_direction === "bullish" ? "\u25B2" : imp.impact_direction === "bearish" ? "\u25BC" : "\u2013"}
                 </span>
                 <span className="text-sm flex-1 min-w-0 line-clamp-1 text-gray-300">{imp.title}</span>
-                {imp.reason && (
-                  <span className="text-xs text-gray-500 shrink-0 max-w-[200px] truncate">{imp.reason}</span>
-                )}
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-xs tabular-nums">
+                  <span className="text-gray-500">관측일 {imp.effective_trading_date ?? "-"}</span>
+                  <span className={(imp.abnormal_return ?? 0) >= 0 ? "text-green-400" : "text-red-400"}>
+                    1D 초과 {formatReturn(imp.abnormal_return)}
+                  </span>
+                  <span className={(observedWindowReturn(imp, "0,+3D") ?? 0) >= 0 ? "text-green-400" : "text-red-400"}>
+                    3D 초과 {formatReturn(observedWindowReturn(imp, "0,+3D"))}
+                  </span>
+                  <span className="text-gray-500">{dataStatusText(imp.data_status)}</span>
+                  {imp.confounded && <span className="text-yellow-400">복합 이벤트</span>}
+                </div>
               </div>
             ))}
           </div>
@@ -586,6 +617,11 @@ export default function StockDetailPage() {
             <p className="text-sm text-gray-400">관련 뉴스가 없습니다.</p>
           </div>
         )}
+      </div>
+
+      <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-4 text-xs leading-relaxed text-amber-100">
+        이 화면의 뉴스 영향은 일봉 기준 시장 대비 관측 반응이며 인과관계나 투자 자문을 의미하지 않습니다.
+        pykrx, FinanceDataReader, yfinance 등 무료/비공식 경로의 데이터는 지연되거나 제공처와 차이가 날 수 있습니다.
       </div>
     </div>
   );
