@@ -141,6 +141,7 @@ class ClaudeRunner:
 
     async def health_check(self) -> bool:
         """Claude CLI 정상 동작 여부를 확인한다."""
+        process: asyncio.subprocess.Process | None = None
         try:
             process = await asyncio.create_subprocess_exec(
                 self.claude_path,
@@ -150,11 +151,14 @@ class ClaudeRunner:
             )
             stdout, _ = await asyncio.wait_for(
                 process.communicate(),
-                timeout=10,
+                timeout=min(self.timeout, 10),
             )
             version = stdout.decode().strip()
             logger.info("claude_cli_health_ok", version=version)
             return process.returncode == 0
         except (TimeoutError, FileNotFoundError, OSError) as e:
+            if process and process.returncode is None:
+                process.kill()
+                await process.wait()
             logger.error("claude_cli_health_failed", error=str(e))
             return False
