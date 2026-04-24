@@ -1,8 +1,7 @@
 """APScheduler AsyncIOScheduler 설정 모듈."""
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 import structlog
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.scheduler.jobs import (
     job_claude_analysis,

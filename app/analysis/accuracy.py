@@ -1,13 +1,13 @@
 """적중률 평가 로직."""
 
-import structlog
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select, func, case
+import structlog
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import AnalysisReport, DailyPrice, AccuracyTracker, Stock
+from app.database.models import AccuracyTracker, AnalysisReport, DailyPrice, Stock
 
 logger = structlog.get_logger(__name__)
 

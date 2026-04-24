@@ -11,13 +11,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis.accuracy import get_accuracy_stats
 from app.analysis.claude_runner import ClaudeRunner
-from app.database.models import NewsStockImpact, NewsArticle, Stock, StockRelation
+from app.database.models import NewsArticle, NewsStockImpact, Stock, StockRelation
 from app.utils.discord import send_alert
 
 logger = structlog.get_logger(__name__)
@@ -183,7 +182,7 @@ _RELATION_UPDATE_PROMPT = """\
 
 형식:
 [
-  {{"action": "add|update|remove", "source_ticker": "005930", "target_ticker": "000660", "type": "competitor", "strength": 0.9, "context": "사유"}}
+  {{"action": "add|update|remove", "source_ticker": "005930", "target_ticker": "000660"}}
 ]
 """
 
@@ -270,7 +269,7 @@ async def _update_relations_from_news(
         logger.info("relation_update_no_changes")
         return
 
-    from app.service.db_service import upsert_stock_relation, get_stock_id_map
+    from app.service.db_service import get_stock_id_map, upsert_stock_relation
 
     stock_id_map = await get_stock_id_map(session)
     updated_count = 0

@@ -6,6 +6,7 @@ import re
 import pandas as pd
 import structlog
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis.claude_runner import ClaudeRunner
 from app.analysis.prompts import (

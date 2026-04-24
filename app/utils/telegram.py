@@ -5,7 +5,7 @@
     하위 호환을 위해 유지되며, 향후 제거될 수 있습니다.
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import structlog

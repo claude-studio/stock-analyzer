@@ -1,7 +1,7 @@
 """RSS 뉴스 수집기 (httpx + feedparser)."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import feedparser
 import httpx
@@ -25,7 +25,7 @@ def _parse_feed(source: str, raw_content: str) -> list[dict]:
     """feedparser로 RSS 원문을 파싱하여 뉴스 항목 리스트를 반환한다."""
     feed = feedparser.parse(raw_content)
     entries = feed.entries[:MAX_ENTRIES_PER_FEED]
-    collected_at = datetime.now(tz=timezone.utc).isoformat()
+    collected_at = datetime.now(tz=UTC).isoformat()
     results = []
     for entry in entries:
         summary_raw = entry.get("summary", "") or ""

@@ -17,10 +17,12 @@ SYSTEM_PROMPT: str = """\
   "recommendation": "strong_buy | buy | hold | sell | strong_sell",
   "confidence": 0.0-1.0 사이의 확신도,
   "target_price": 목표가 (숫자),
-  "bull_case": "먼저 Bull case(상승 시나리오)를 독립적으로 작성한 뒤, 반대 입장에서 Bear case(하락 시나리오)를 작성하세요. 두 관점을 균형 있게 고려한 후 최종 recommendation을 결정하세요. bull_case는 최소 2문장 이상 구체적으로 작성.",
-  "bear_case": "Bear case(하락 시나리오)도 최소 2문장 이상 구체적으로 작성. bull_case와 독립적으로, 반대 관점에서 리스크와 하락 요인을 분석하세요.",
+  "bull_case": "상승 시나리오를 독립적으로 2문장 이상 작성.",
+  "bear_case": "하락 시나리오를 독립적으로 2문장 이상 작성.",
   "key_factors": ["핵심 요인 1", "핵심 요인 2", ...],
-  "impact_chain": [{"target": "종목명", "relation": "관계유형", "direction": "bullish|bearish|neutral", "reasoning": "이유"}]
+  "impact_chain": [
+    {"target": "종목명", "relation": "관계유형", "direction": "bullish", "reasoning": "이유"}
+  ]
 }
 
 분석 순서:
@@ -32,7 +34,7 @@ SYSTEM_PROMPT: str = """\
 
 "impact_chain" 필드를 JSON 응답에 포함하세요:
 "impact_chain": [
-  {"target": "종목명", "relation": "관계유형", "direction": "bullish|bearish|neutral", "reasoning": "이유"}
+  {"target": "종목명", "relation": "관계유형", "direction": "bullish", "reasoning": "이유"}
 ]
 관계 정보가 없으면 빈 배열로 두세요.
 

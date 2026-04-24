@@ -37,7 +37,7 @@ JSON 배열로만 응답. 한국 상장사 중심으로, 비상장/해외 기업
 
 형식:
 [
-  {{"target_name": "SK하이닉스", "target_ticker": "000660", "type": "competitor", "strength": 0.9, "context": "DRAM/NAND 반도체 직접 경쟁"}},
+  {{"target_name": "SK하이닉스", "target_ticker": "000660", "type": "competitor"}},
   ...
 ]
 """
@@ -311,7 +311,7 @@ async def seed_sector_peers(session: AsyncSession) -> int:
     """
     from app.core.config import settings
 
-    watchlist = settings.KR_WATCHLIST
+    watchlist = settings.kr_watchlist
 
     # 워치리스트 종목 조회
     watchlist_stocks: list[Stock] = []
@@ -459,6 +459,7 @@ def _fetch_ftc_all_members_sync(year: str) -> dict[str, set[str]]:
     import xml.etree.ElementTree as ET
 
     import httpx
+
     from app.core.config import settings
 
     if not settings.FTC_API_KEY:
@@ -488,7 +489,12 @@ def _fetch_ftc_all_members_sync(year: str) -> dict[str, set[str]]:
             group = item.findtext("unityGrupNm", "")
             company = item.findtext("entrprsNm", "")
             if group and company:
-                clean = company.replace("(주)", "").replace("주식회사", "").replace("㈜", "").strip()
+                clean = (
+                    company.replace("(주)", "")
+                    .replace("주식회사", "")
+                    .replace("㈜", "")
+                    .strip()
+                )
                 group_members.setdefault(group, set()).add(clean)
 
     logger.info("ftc_all_fetched", groups=len(group_members), year=year)
@@ -506,11 +512,9 @@ async def seed_from_ftc(session: AsyncSession) -> int:
     now = datetime.now(tz=KST)
     # 가장 최근 데이터 연도를 역순 탐색
     group_members: dict[str, set[str]] = {}
-    year = None
     for y in range(now.year, now.year - 4, -1):
         group_members = await asyncio.to_thread(_fetch_ftc_all_members_sync, str(y))
         if group_members:
-            year = str(y)
             break
     if not group_members:
         logger.info("ftc_no_data_found")
@@ -524,7 +528,7 @@ async def seed_from_ftc(session: AsyncSession) -> int:
 
     # 워치리스트 종목 name/id
     watchlist_stocks: dict[int, str] = {}
-    for ticker in settings.KR_WATCHLIST:
+    for ticker in settings.kr_watchlist:
         stock = await get_stock_by_ticker(session, ticker)
         if stock:
             watchlist_stocks[stock.id] = stock.name

@@ -11,13 +11,13 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analysis.accuracy import get_accuracy_stats
 from app.analysis.claude_runner import ClaudeRunner
 from app.analysis.prompts import build_analysis_prompt
 from app.analysis.technical import calculate_technical_indicators
 from app.core.auth import check_rate_limit, verify_api_key
 from app.core.config import settings
 from app.database.session import async_session_factory, get_db
-from app.analysis.accuracy import get_accuracy_stats
 from app.service.db_service import (
     get_daily_prices,
     get_latest_analysis,
@@ -27,8 +27,10 @@ from app.service.db_service import (
     get_recent_news_with_stock,
     get_stock_by_ticker,
     get_stock_relations,
-    list_stocks as db_list_stocks,
     save_analysis_report,
+)
+from app.service.db_service import (
+    list_stocks as db_list_stocks,
 )
 
 logger = structlog.get_logger(__name__)
@@ -168,7 +170,7 @@ async def get_watchlist_summary(session: DbSession) -> dict[str, Any]:
     """관심 종목 요약 (대시보드용)."""
     watchlist_items: list[dict[str, Any]] = []
 
-    for ticker in settings.KR_WATCHLIST:
+    for ticker in settings.kr_watchlist:
         stock = await get_stock_by_ticker(session, ticker)
         if not stock:
             continue
@@ -359,8 +361,8 @@ async def get_market_overview() -> dict[str, Any]:
     """KOSPI/KOSDAQ 당일 지수를 조회한다."""
     from pykrx import stock as pykrx_stock
 
-    KST = ZoneInfo("Asia/Seoul")
-    today_str = datetime.now(tz=KST).date().strftime("%Y%m%d")
+    kst = ZoneInfo("Asia/Seoul")
+    today_str = datetime.now(tz=kst).date().strftime("%Y%m%d")
 
     kospi_data: dict[str, Any] = {"close": None, "change_pct": None}
     kosdaq_data: dict[str, Any] = {"close": None, "change_pct": None}
@@ -394,7 +396,7 @@ async def get_market_overview() -> dict[str, Any]:
     return {
         "kospi": kospi_data,
         "kosdaq": kosdaq_data,
-        "updated_at": datetime.now(tz=KST).isoformat(),
+        "updated_at": datetime.now(tz=kst).isoformat(),
     }
 
 
@@ -494,7 +496,10 @@ async def seed_relations(background_tasks: BackgroundTasks) -> dict[str, Any]:
     logger.info("seed_relations_queued")
     return {
         "status": "accepted",
-        "message": "관계 시드 생성이 대기열에 추가되었습니다 (sector_map -> dart -> llm 순차 실행).",
+        "message": (
+            "관계 시드 생성이 대기열에 추가되었습니다 "
+            "(sector_map -> dart -> llm 순차 실행)."
+        ),
         "sources": ["sector_map", "dart", "llm"],
     }
 

@@ -1,7 +1,7 @@
 """FastAPI 앱 엔트리포인트."""
 
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
