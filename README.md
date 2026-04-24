@@ -66,6 +66,32 @@ docker compose up -d --build
 docker exec stock-api alembic upgrade head
 ```
 
+### GitHub Actions 자동 배포 (A3)
+
+- 트리거: `main` push 자동 배포 + `workflow_dispatch` 수동 배포
+- 방식: GitHub Actions가 ARM64 이미지를 GHCR에 푸시하고, OCI ARM 서버는 SSH로 `docker compose pull && up -d --wait`만 수행
+- 서버 배포 파일: `docker-compose.prod.yml`, `deploy/remote-deploy.sh`
+- Caddy: `deploy/caddy-stock.conf` 기준으로 **모든 요청을 `stock-frontend`로 전달**해야 함. `/api/v1/*`, `/health`는 프론트 서버 라우트가 내부적으로 백엔드에 프록시한다.
+
+#### GitHub Secrets / Environment
+
+`production` Environment에 아래 값을 등록한다.
+
+- `OCI_DEPLOY_HOST`: OCI ARM 서버 호스트명 또는 IP
+- `OCI_DEPLOY_USER`: 배포용 SSH 사용자
+- `OCI_APP_DIR`: 서버 앱 경로 (예: `/home/ubuntu/stock-analyzer`)
+- `OCI_DEPLOY_SSH_KEY`: 배포용 SSH 개인키
+- `OCI_DEPLOY_KNOWN_HOSTS`: 고정된 SSH host key (`StrictHostKeyChecking=yes` 전제)
+- `GHCR_USERNAME`: GHCR 읽기 가능한 계정명
+- `GHCR_READ_TOKEN`: GHCR read 권한 토큰
+
+#### 서버 준비물
+
+- `.env` 파일이 서버 앱 디렉터리에 존재해야 함
+- `infra_default` Docker 네트워크가 존재해야 함
+- Caddy가 `stock-frontend:3000`으로 프록시할 수 있어야 함
+- 최초 1회는 `bash deploy/setup.sh`로 infra 의존성을 확인하는 것을 권장
+
 ## API
 
 | 엔드포인트 | 설명 | 인증 |
