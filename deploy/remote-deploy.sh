@@ -64,7 +64,7 @@ export FRONTEND_IMAGE
 
 docker compose -f "$COMPOSE_FILE" pull
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans --wait
-docker compose -f "$COMPOSE_FILE" exec -T stock-api alembic upgrade head
+docker compose -f "$COMPOSE_FILE" exec -T stock-api sh -lc 'cd /app && PYTHONPATH=/app python -m alembic upgrade head'
 docker exec stock-api curl -fsS http://localhost:8000/health >/dev/null
 
 cat > "$ROLLBACK_STATE_FILE" <<EOF
