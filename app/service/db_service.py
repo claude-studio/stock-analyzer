@@ -1,16 +1,22 @@
 """DB 저장/조회 서비스 레이어."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.analysis.news_impact import (
+    ObservedReaction,
+    benchmark_ticker_for_market,
+    calculate_observed_reaction_from_prices,
+    resolve_effective_trading_date,
+)
 from app.database.models import (
     AccuracyTracker,
     AnalysisReport,
@@ -61,9 +67,13 @@ async def upsert_stocks(session: AsyncSession, df: pd.DataFrame) -> int:
     stmt = pg_insert(Stock).values(rows)
     stmt = stmt.on_conflict_do_update(
         index_elements=["ticker"],
-        set_={"name": stmt.excluded.name, "market": stmt.excluded.market, "sector": stmt.excluded.sector},
+        set_={
+            "name": stmt.excluded.name,
+            "market": stmt.excluded.market,
+            "sector": stmt.excluded.sector,
+        },
     )
-    result = await session.execute(stmt)
+    await session.execute(stmt)
     await session.flush()
     logger.info("stocks_upserted", count=len(rows))
     return len(rows)
@@ -79,6 +89,28 @@ async def get_stock_id_map(session: AsyncSession) -> dict[str, int]:
     """전체 종목 ticker -> id 매핑 딕셔너리."""
     result = await session.execute(select(Stock.ticker, Stock.id))
     return {row.ticker: row.id for row in result}
+
+
+async def ensure_benchmark_stocks(session: AsyncSession) -> int:
+    """뉴스 영향 계산에 필요한 대표 벤치마크 종목을 보장한다."""
+    rows = [
+        {"ticker": "KOSPI", "name": "KOSPI", "market": "KOSPI", "sector": "benchmark"},
+        {"ticker": "KOSDAQ", "name": "KOSDAQ", "market": "KOSDAQ", "sector": "benchmark"},
+        {"ticker": "SPY", "name": "SPDR S&P 500 ETF", "market": "US", "sector": "benchmark"},
+    ]
+    stmt = pg_insert(Stock).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["ticker"],
+        set_={
+            "name": stmt.excluded.name,
+            "market": stmt.excluded.market,
+            "sector": stmt.excluded.sector,
+            "is_active": True,
+        },
+    )
+    await session.execute(stmt)
+    await session.flush()
+    return len(rows)
 
 
 async def get_stock_name_map(session: AsyncSession) -> dict[str, int]:
@@ -315,6 +347,122 @@ async def save_news_impact(
     await session.execute(stmt)
 
 
+async def refresh_news_observed_reactions(
+    session: AsyncSession,
+    days: int = 90,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """최근 뉴스 영향 매핑에 일봉 기준 관측 가격 반응을 보강한다."""
+    cutoff = datetime.now(tz=KST) - timedelta(days=days)
+    stmt = (
+        select(NewsStockImpact, NewsArticle, Stock)
+        .join(NewsArticle, NewsStockImpact.news_article_id == NewsArticle.id)
+        .join(Stock, NewsStockImpact.stock_id == Stock.id)
+        .where(NewsArticle.published_at >= cutoff)
+        .order_by(NewsArticle.published_at.desc())
+    )
+    rows = (await session.execute(stmt)).all()
+    targets: list[tuple[NewsStockImpact, NewsArticle, Stock, date]] = []
+    cluster_counts: dict[tuple[int, date], int] = {}
+    for impact, article, stock in rows:
+        effective_date = resolve_effective_trading_date(stock.market, article.published_at)
+        targets.append((impact, article, stock, effective_date))
+        key = (stock.id, effective_date)
+        cluster_counts[key] = cluster_counts.get(key, 0) + 1
+
+    updated = 0
+    skipped = 0
+    for impact, _article, stock, effective_date in targets:
+        reaction, observed_windows = await _calculate_reaction_for_stock(
+            session=session,
+            stock=stock,
+            effective_date=effective_date,
+            confounded=cluster_counts[(stock.id, effective_date)] > 1,
+        )
+        if dry_run:
+            skipped += 1
+            continue
+        await _update_observed_reaction(session, impact.id, reaction, observed_windows)
+        updated += 1
+
+    await session.flush()
+    logger.info(
+        "news_observed_reactions_refreshed",
+        candidates=len(targets),
+        updated=updated,
+        dry_run=dry_run,
+    )
+    return {"candidates": len(targets), "updated": updated, "skipped": skipped}
+
+
+async def _calculate_reaction_for_stock(
+    *,
+    session: AsyncSession,
+    stock: Stock,
+    effective_date: date,
+    confounded: bool,
+) -> tuple[ObservedReaction, list[dict]]:
+    benchmark_ticker = benchmark_ticker_for_market(stock.market)
+    benchmark = await get_stock_by_ticker(session, benchmark_ticker)
+    start_date = effective_date - timedelta(days=5)
+    end_date = effective_date + timedelta(days=14)
+    stock_prices = await get_daily_prices(
+        session,
+        stock.id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=40,
+    )
+    benchmark_prices = []
+    if benchmark:
+        benchmark_prices = await get_daily_prices(
+            session,
+            benchmark.id,
+            start_date=start_date,
+            end_date=end_date,
+            limit=40,
+        )
+    reactions = [
+        calculate_observed_reaction_from_prices(
+            stock_prices=stock_prices,
+            benchmark_prices=benchmark_prices,
+            market=stock.market,
+            effective_date=effective_date,
+            window_days=window_days,
+            confounded=confounded,
+        )
+        for window_days in (1, 3)
+    ]
+    return reactions[0], [_serialize_reaction_window(reaction) for reaction in reactions]
+
+
+async def _update_observed_reaction(
+    session: AsyncSession,
+    impact_id: int,
+    reaction: ObservedReaction,
+    observed_windows: list[dict],
+) -> None:
+    stmt = (
+        update(NewsStockImpact)
+        .where(NewsStockImpact.id == impact_id)
+        .values(
+            effective_trading_date=reaction.effective_trading_date,
+            window_label=reaction.window_label,
+            benchmark_ticker=reaction.benchmark_ticker,
+            stock_return=reaction.stock_return,
+            benchmark_return=reaction.benchmark_return,
+            abnormal_return=reaction.abnormal_return,
+            car=reaction.car,
+            observed_windows=observed_windows,
+            confidence=reaction.confidence,
+            confounded=reaction.confounded,
+            data_status=reaction.data_status,
+            marker_label=reaction.marker_label,
+        )
+    )
+    await session.execute(stmt)
+
+
 async def get_news_impact_summary(
     session: AsyncSession,
     stock_id: int,
@@ -328,6 +476,7 @@ async def get_news_impact_summary(
     stmt = (
         select(NewsStockImpact, NewsArticle.title, NewsArticle.published_at)
         .join(NewsArticle, NewsStockImpact.news_article_id == NewsArticle.id)
+        .options(selectinload(NewsStockImpact.stock))
         .where(
             NewsStockImpact.stock_id == stock_id,
             NewsArticle.published_at >= cutoff,
@@ -354,14 +503,7 @@ async def get_news_impact_summary(
         if impact.impact_score is not None:
             scores.append(float(impact.impact_score))
 
-        if impact.reason:
-            reasons.append({
-                "title": title,
-                "direction": impact.impact_direction,
-                "score": float(impact.impact_score) if impact.impact_score is not None else None,
-                "reason": impact.reason,
-                "published_at": str(published_at) if published_at else None,
-            })
+        reasons.append(_serialize_impact(impact, title=title, published_at=published_at))
 
     avg_score = sum(scores) / len(scores) if scores else 0.0
 
@@ -372,8 +514,10 @@ async def get_news_impact_summary(
         "bearish_count": bearish_count,
         "neutral_count": neutral_count,
         "total_count": len(rows),
+        "total_news": len(rows),
         "avg_impact_score": round(avg_score, 3),
         "recent_impacts": reasons[:10],
+        "event_markers": reasons[:50],
     }
 
 
@@ -402,7 +546,11 @@ async def get_news_detail(
         "source": article.source,
         "url": article.url,
         "published_at": str(article.published_at) if article.published_at else None,
-        "sentiment_score": float(article.sentiment_score) if article.sentiment_score is not None else None,
+        "sentiment_score": (
+            float(article.sentiment_score)
+            if article.sentiment_score is not None
+            else None
+        ),
         "sentiment_label": article.sentiment_label,
         "news_category": article.news_category,
         "impact_summary": article.impact_summary,
@@ -411,13 +559,7 @@ async def get_news_detail(
         "stock_ticker": article.stock.ticker if article.stock else None,
         "stock_name": article.stock.name if article.stock else None,
         "impacts": [
-            {
-                "stock_ticker": imp.stock.ticker if imp.stock else None,
-                "stock_name": imp.stock.name if imp.stock else None,
-                "impact_direction": imp.impact_direction,
-                "impact_score": float(imp.impact_score) if imp.impact_score is not None else None,
-                "reason": imp.reason,
-            }
+            _serialize_impact(imp)
             for imp in article.stock_impacts
         ],
     }
@@ -474,13 +616,7 @@ async def get_recent_news_with_stock(
             "stock_ticker": a.stock.ticker if a.stock else None,
             "stock_name": a.stock.name if a.stock else None,
             "impacts": [
-                {
-                    "stock_ticker": imp.stock.ticker if imp.stock else None,
-                    "stock_name": imp.stock.name if imp.stock else None,
-                    "impact_direction": imp.impact_direction,
-                    "impact_score": float(imp.impact_score) if imp.impact_score is not None else None,
-                    "reason": imp.reason,
-                }
+                _serialize_impact(imp)
                 for imp in a.stock_impacts
             ],
         }
@@ -530,7 +666,12 @@ async def save_analysis_report(
     )
     await session.execute(stmt)
     await session.flush()
-    logger.info("analysis_report_saved", stock_id=stock_id, date=str(analysis_date), type=analysis_type)
+    logger.info(
+        "analysis_report_saved",
+        stock_id=stock_id,
+        date=str(analysis_date),
+        type=analysis_type,
+    )
 
     result_row = await session.execute(
         select(AnalysisReport).where(
@@ -814,3 +955,59 @@ def _parse_datetime(val) -> datetime:
             except ValueError:
                 continue
     return datetime.now(tz=KST)
+
+
+def _serialize_impact(
+    impact: NewsStockImpact,
+    title: str | None = None,
+    published_at: datetime | None = None,
+) -> dict:
+    return {
+        "article_id": impact.news_article_id,
+        "title": title,
+        "stock_ticker": impact.stock.ticker if impact.stock else None,
+        "stock_name": impact.stock.name if impact.stock else None,
+        "impact_direction": impact.impact_direction,
+        "impact_score": float(impact.impact_score) if impact.impact_score is not None else None,
+        "reason": impact.reason,
+        "published_at": str(published_at) if published_at else None,
+        "effective_trading_date": str(impact.effective_trading_date)
+        if impact.effective_trading_date
+        else None,
+        "window": impact.window_label,
+        "benchmark": impact.benchmark_ticker,
+        "stock_return": float(impact.stock_return) if impact.stock_return is not None else None,
+        "benchmark_return": float(impact.benchmark_return)
+        if impact.benchmark_return is not None
+        else None,
+        "abnormal_return": float(impact.abnormal_return)
+        if impact.abnormal_return is not None
+        else None,
+        "car": float(impact.car) if impact.car is not None else None,
+        "observed_windows": impact.observed_windows or [],
+        "confidence": float(impact.confidence) if impact.confidence is not None else None,
+        "confounded": impact.confounded,
+        "data_status": impact.data_status,
+        "marker_label": impact.marker_label,
+    }
+
+
+def _serialize_reaction_window(reaction: ObservedReaction) -> dict:
+    return {
+        "window": reaction.window_label,
+        "benchmark": reaction.benchmark_ticker,
+        "stock_return": float(reaction.stock_return) if reaction.stock_return is not None else None,
+        "benchmark_return": (
+            float(reaction.benchmark_return)
+            if reaction.benchmark_return is not None
+            else None
+        ),
+        "abnormal_return": (
+            float(reaction.abnormal_return)
+            if reaction.abnormal_return is not None
+            else None
+        ),
+        "car": float(reaction.car) if reaction.car is not None else None,
+        "confidence": float(reaction.confidence) if reaction.confidence is not None else None,
+        "data_status": reaction.data_status,
+    }
