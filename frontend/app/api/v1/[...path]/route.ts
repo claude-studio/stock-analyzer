@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND_API_URL = process.env.API_URL || "http://stock-api:8000";
 const API_KEY = process.env.API_KEY || "";
+const BACKEND_TIMEOUT_MS = 10_000;
 const ALLOWED_GET_PATTERNS = [
   /^stocks$/,
   /^stocks\/[^/]+\/detail$/,
@@ -35,12 +36,25 @@ async function proxyRequest(
     headers.set("X-API-Key", API_KEY);
   }
 
-  const response = await fetch(targetUrl, {
-    method: request.method,
-    headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.text(),
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BACKEND_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(targetUrl, {
+      method: request.method,
+      headers,
+      body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.text(),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return NextResponse.json({ detail: "Backend request timed out" }, { status: 504 });
+    }
+    return NextResponse.json({ detail: "Backend request failed" }, { status: 502 });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   return new NextResponse(response.body, {
     status: response.status,

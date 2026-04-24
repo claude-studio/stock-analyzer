@@ -2,15 +2,32 @@ export async function fetchAPI<T>(
   path: string,
   options?: RequestInit,
 ): Promise<T> {
-  const res = await fetch(path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
-  });
-  if (!res.ok) throw new Error(`API Error: ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  const abortFromOption = () => controller.abort(options?.signal?.reason);
+
+  if (options?.signal?.aborted) {
+    abortFromOption();
+  } else {
+    options?.signal?.addEventListener("abort", abortFromOption, { once: true });
+  }
+
+  try {
+    const res = await fetch(path, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+      },
+    });
+
+    if (!res.ok) throw new Error(`API Error: ${res.status}`);
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
+    options?.signal?.removeEventListener("abort", abortFromOption);
+  }
 }
 
 export interface Stock {
