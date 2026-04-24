@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { fetchAPI } from "@/lib/api";
 import type { Stock } from "@/lib/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 export default function StocksPage() {
   const [stocks, setStocks] = useState<Stock[]>([]);
@@ -16,14 +15,7 @@ export default function StocksPage() {
   useEffect(() => {
     async function load() {
       try {
-        const res = await fetch(`${API_BASE}/api/v1/stocks`, {
-          headers: {
-            "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "",
-            "Content-Type": "application/json",
-          },
-        });
-        if (!res.ok) throw new Error(`${res.status}`);
-        const data = await res.json();
+        const data = await fetchAPI<{ stocks?: Stock[] }>("/api/v1/stocks");
         setStocks(Array.isArray(data) ? data : data.stocks ?? []);
       } catch (err) {
         setError(err instanceof Error ? err.message : "데이터 로딩 실패");
