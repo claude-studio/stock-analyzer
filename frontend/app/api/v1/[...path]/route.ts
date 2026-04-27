@@ -3,19 +3,44 @@ import { NextRequest, NextResponse } from "next/server";
 const BACKEND_API_URL = process.env.API_URL || "http://stock-api:8000";
 const API_KEY = process.env.API_KEY || "";
 const BACKEND_TIMEOUT_MS = 10_000;
-const ALLOWED_GET_PATTERNS = [
-  /^stocks$/,
-  /^stocks\/[^/]+\/detail$/,
-  /^stocks\/[^/]+\/analysis$/,
-  /^stocks\/[^/]+\/prices$/,
-  /^stocks\/[^/]+\/technical$/,
-  /^stocks\/[^/]+\/news-impact$/,
-  /^market\/overview$/,
-  /^watchlist$/,
-  /^news$/,
-  /^news\/\d+$/,
-  /^accuracy$/,
-];
+const ALLOWED_PATHS_BY_METHOD: Record<string, RegExp[]> = {
+  GET: [
+    /^stocks$/,
+    /^stocks\/[^/]+\/detail$/,
+    /^stocks\/[^/]+\/analysis$/,
+    /^stocks\/[^/]+\/prices$/,
+    /^stocks\/[^/]+\/technical$/,
+    /^stocks\/[^/]+\/news-impact$/,
+    /^market\/overview$/,
+    /^watchlist$/,
+    /^news$/,
+    /^news\/\d+$/,
+    /^accuracy$/,
+    /^portfolio\/summary$/,
+    /^portfolio\/holdings$/,
+    /^screener$/,
+    /^alerts\/rules$/,
+    /^alerts\/events$/,
+  ],
+  POST: [
+    /^portfolio\/holdings$/,
+    /^backtests\/run$/,
+    /^alerts\/rules$/,
+    /^alerts\/evaluate$/,
+  ],
+  PATCH: [
+    /^portfolio\/holdings\/[^/]+$/,
+    /^alerts\/rules\/[^/]+$/,
+  ],
+  DELETE: [
+    /^portfolio\/holdings\/[^/]+$/,
+    /^alerts\/rules\/[^/]+$/,
+  ],
+};
+
+function isAllowedPath(method: string, path: string): boolean {
+  return ALLOWED_PATHS_BY_METHOD[method]?.some((pattern) => pattern.test(path)) ?? false;
+}
 
 async function proxyRequest(
   request: NextRequest,
@@ -23,7 +48,7 @@ async function proxyRequest(
 ): Promise<NextResponse> {
   const segments = params.path ?? [];
   const path = segments.join("/");
-  if (!ALLOWED_GET_PATTERNS.some((pattern) => pattern.test(path))) {
+  if (!isAllowedPath(request.method, path)) {
     return NextResponse.json({ detail: "Not found" }, { status: 404 });
   }
 
@@ -63,6 +88,27 @@ async function proxyRequest(
 }
 
 export async function GET(
+  request: NextRequest,
+  context: { params: Promise<{ path?: string[] }> },
+): Promise<NextResponse> {
+  return proxyRequest(request, await context.params);
+}
+
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ path?: string[] }> },
+): Promise<NextResponse> {
+  return proxyRequest(request, await context.params);
+}
+
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ path?: string[] }> },
+): Promise<NextResponse> {
+  return proxyRequest(request, await context.params);
+}
+
+export async function DELETE(
   request: NextRequest,
   context: { params: Promise<{ path?: string[] }> },
 ): Promise<NextResponse> {
