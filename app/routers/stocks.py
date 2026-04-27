@@ -18,7 +18,7 @@ from app.analysis.technical import calculate_technical_indicators
 from app.core.auth import check_rate_limit, verify_api_key
 from app.core.config import settings
 from app.database.session import async_session_factory, get_db
-from app.routers import portfolio
+from app.routers import portfolio, screener
 from app.service.db_service import (
     get_analysis_history,
     get_daily_prices,
@@ -41,6 +41,7 @@ router = APIRouter(prefix="/api/v1", tags=["stocks"], dependencies=[Depends(veri
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 router.include_router(portfolio.router)
+router.include_router(screener.router)
 
 
 def _decimal_to_float(v: Decimal | None) -> float | None:

@@ -139,6 +139,26 @@ export default function DashboardPage() {
         <p className="mt-2 text-xs text-gray-500">미국 종목은 종목 목록·상세 화면에서만 제한 지원됩니다.</p>
       </div>
 
+      <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium text-sky-300">아이디어 스크리너</p>
+            <p className="mt-1 text-sm text-gray-300">
+              저장된 KRX 시세·뉴스·최종 일일 리포트만으로 후보를 정렬해 보는 개인용 탐색 화면이 추가되었습니다.
+            </p>
+            <p className="mt-2 text-xs text-gray-500">
+              전체 시장 랭킹이 아니라 현재 수집 범위 안에서 아이디어를 찾는 보조 도구입니다.
+            </p>
+          </div>
+          <Link
+            href="/screener"
+            className="inline-flex items-center justify-center rounded-lg border border-sky-500/30 px-4 py-2 text-sm font-medium text-sky-200 transition-colors hover:bg-sky-500/10 hover:text-white"
+          >
+            스크리너 열기 &rarr;
+          </Link>
+        </div>
+      </div>
+
       {/* 상단: KOSPI / KOSDAQ 지수 카드 */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="rounded-lg border border-gray-800 bg-[#111111] p-5">

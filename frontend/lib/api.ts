@@ -301,6 +301,62 @@ export interface PortfolioHoldingUpdatePayload {
   average_price?: number;
 }
 
+export interface ScreenerCoverage {
+  ranked_markets: string[];
+  excluded_markets: string[];
+  uses_stored_data_only: boolean;
+  eligible_stocks: number;
+  insufficient_stocks: number;
+}
+
+export interface ScreenerEmptyState {
+  title: string;
+  description: string;
+}
+
+export interface ScreenerComponents {
+  price_momentum_pct: number | null;
+  price_momentum_score: number | null;
+  volume_spike_ratio: number | null;
+  volume_spike_score: number | null;
+  recent_news_count: number;
+  recent_news_score: number | null;
+  avg_news_impact_score: number | null;
+  news_impact_score: number | null;
+  latest_daily_recommendation: string | null;
+  latest_daily_recommendation_score: number | null;
+}
+
+export interface ScreenerCandidate {
+  ticker: string;
+  name: string;
+  market: string;
+  sector: string | null;
+  score: number;
+  components: ScreenerComponents;
+  reasons: string[];
+  latest_recommendation: string | null;
+  analysis_date: string | null;
+  latest_close: number | null;
+  latest_trade_date: string | null;
+}
+
+export interface ScreenerResponse {
+  candidates: ScreenerCandidate[];
+  total_candidates: number;
+  total_eligible: number;
+  total_insufficient: number;
+  limit: number;
+  lookback_days: number;
+  news_window_days: number;
+  minimum_price_points: number;
+  reference_trade_date: string | null;
+  generated_at: string;
+  coverage: ScreenerCoverage;
+  limitations: string[];
+  empty_state: ScreenerEmptyState;
+}
+
 export async function fetchNewsDetail(
   newsId: number,
 ): Promise<NewsArticle> {
@@ -326,6 +382,15 @@ export async function fetchAnalysisHistory(
 
 export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
   return fetchAPI<PortfolioSummary>("/api/v1/portfolio/summary");
+}
+
+export async function fetchPersonalScreener(
+  limit: number = 10,
+  lookbackDays: number = 30,
+): Promise<ScreenerResponse> {
+  return fetchAPI<ScreenerResponse>(
+    `/api/v1/screener?limit=${limit}&lookback_days=${lookbackDays}`,
+  );
 }
 
 export async function createPortfolioHolding(

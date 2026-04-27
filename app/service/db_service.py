@@ -1,12 +1,13 @@
 """DB 저장/조회 서비스 레이어."""
 
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -39,6 +40,102 @@ _US_WATCHLIST_BASELINE: dict[str, dict[str, str | None]] = {
     "QQQ": {"name": "Invesco QQQ Trust", "sector": "ETF"},
     "SPY": {"name": "SPDR S&P 500 ETF Trust", "sector": "ETF"},
 }
+
+SCREENER_MINIMUM_PRICE_POINTS = 5
+SCREENER_NEWS_WINDOW_DAYS = 7
+SCREENER_LIMITATIONS = [
+    "현재 DB에 저장된 데이터만 사용합니다.",
+    "미국 종목은 이 스크리너 랭킹에 포함하지 않습니다.",
+    (
+        "전체 시장 커버리지를 보장하지 않으며, 저장된 가격·뉴스·일일 리포트 "
+        "범위 안에서만 아이디어 탐색용으로 사용하세요."
+    ),
+]
+
+
+def _clamp(value: float, minimum: float, maximum: float) -> float:
+    return max(minimum, min(maximum, value))
+
+
+def _round_float(value: float | None, digits: int = 2) -> float | None:
+    if value is None:
+        return None
+    return round(value, digits)
+
+
+def _get_recommendation_score(recommendation: str | None) -> float:
+    if not recommendation:
+        return 0.0
+
+    normalized = recommendation.lower()
+    if "strong_buy" in normalized:
+        return 12.0
+    if "buy" in normalized:
+        return 8.0
+    if "hold" in normalized:
+        return 0.0
+    if "strong_sell" in normalized:
+        return -10.0
+    if "sell" in normalized:
+        return -6.0
+    return 0.0
+
+
+def _get_recommendation_label(recommendation: str | None) -> str | None:
+    if not recommendation:
+        return None
+
+    normalized = recommendation.lower()
+    if "strong_buy" in normalized:
+        return "강력 매수"
+    if "buy" in normalized:
+        return "매수"
+    if "hold" in normalized:
+        return "보유"
+    if "strong_sell" in normalized:
+        return "강력 매도"
+    if "sell" in normalized:
+        return "매도"
+    return recommendation
+
+
+def _build_screener_empty_response(
+    *,
+    limit: int,
+    lookback_days: int,
+    minimum_price_points: int,
+    reference_trade_date: date | None,
+    total_eligible: int,
+    total_insufficient: int,
+    candidates: list[dict],
+) -> dict:
+    return {
+        "candidates": candidates,
+        "total_candidates": len(candidates),
+        "total_eligible": total_eligible,
+        "total_insufficient": total_insufficient,
+        "limit": limit,
+        "lookback_days": lookback_days,
+        "news_window_days": min(SCREENER_NEWS_WINDOW_DAYS, lookback_days),
+        "minimum_price_points": minimum_price_points,
+        "reference_trade_date": str(reference_trade_date) if reference_trade_date else None,
+        "generated_at": datetime.now(tz=KST).isoformat(),
+        "coverage": {
+            "ranked_markets": ["KRX", "KOSPI", "KOSDAQ", "KONEX"],
+            "excluded_markets": ["US"],
+            "uses_stored_data_only": True,
+            "eligible_stocks": total_eligible,
+            "insufficient_stocks": total_insufficient,
+        },
+        "limitations": SCREENER_LIMITATIONS,
+        "empty_state": {
+            "title": "저장된 시세 커버리지가 아직 부족합니다.",
+            "description": (
+                "현재 저장된 KRX 가격·뉴스·일일 리포트 범위 안에서는 조건을 만족하는 "
+                "후보를 계산하지 못했습니다. 기회가 없다는 뜻은 아닙니다."
+            ),
+        },
+    }
 
 
 # ──────────────────────────────────────────────
@@ -933,6 +1030,259 @@ async def get_analysis_history(
         )
     )
     return list(result.scalars().all())
+
+
+async def get_personal_screener(
+    session: AsyncSession,
+    *,
+    limit: int = 10,
+    lookback_days: int = 30,
+) -> dict:
+    """저장된 KRX 데이터만으로 개인용 아이디어 스크리너 결과를 계산한다."""
+    ranked_markets = tuple(sorted(KR_MARKETS))
+    minimum_price_points = min(SCREENER_MINIMUM_PRICE_POINTS, lookback_days)
+    stocks_result = await session.execute(
+        select(Stock)
+        .where(
+            Stock.is_active.is_(True),
+            Stock.market.in_(ranked_markets),
+        )
+        .order_by(Stock.ticker.asc())
+    )
+    stocks = list(stocks_result.scalars().all())
+
+    if not stocks:
+        return _build_screener_empty_response(
+            limit=limit,
+            lookback_days=lookback_days,
+            minimum_price_points=minimum_price_points,
+            reference_trade_date=None,
+            total_eligible=0,
+            total_insufficient=0,
+            candidates=[],
+        )
+
+    reference_trade_date = (
+        await session.execute(
+            select(func.max(DailyPrice.trade_date))
+            .select_from(DailyPrice)
+            .join(Stock, DailyPrice.stock_id == Stock.id)
+            .where(
+                Stock.is_active.is_(True),
+                Stock.market.in_(ranked_markets),
+            )
+        )
+    ).scalar_one_or_none()
+
+    if reference_trade_date is None:
+        return _build_screener_empty_response(
+            limit=limit,
+            lookback_days=lookback_days,
+            minimum_price_points=minimum_price_points,
+            reference_trade_date=None,
+            total_eligible=0,
+            total_insufficient=len(stocks),
+            candidates=[],
+        )
+
+    price_cutoff = reference_trade_date - timedelta(days=lookback_days - 1)
+    news_window_days = min(SCREENER_NEWS_WINDOW_DAYS, lookback_days)
+    news_cutoff = datetime.combine(
+        reference_trade_date - timedelta(days=news_window_days - 1),
+        datetime.min.time(),
+        tzinfo=KST,
+    )
+    news_end = datetime.combine(
+        reference_trade_date + timedelta(days=1),
+        datetime.min.time(),
+        tzinfo=KST,
+    )
+
+    prices_result = await session.execute(
+        select(DailyPrice)
+        .join(Stock, DailyPrice.stock_id == Stock.id)
+        .where(
+            Stock.is_active.is_(True),
+            Stock.market.in_(ranked_markets),
+            DailyPrice.trade_date >= price_cutoff,
+            DailyPrice.trade_date <= reference_trade_date,
+        )
+        .order_by(DailyPrice.stock_id.asc(), DailyPrice.trade_date.asc())
+    )
+    prices_by_stock: dict[int, list[DailyPrice]] = defaultdict(list)
+    for price in prices_result.scalars().all():
+        prices_by_stock[price.stock_id].append(price)
+
+    news_result = await session.execute(
+        select(NewsArticle)
+        .join(Stock, NewsArticle.stock_id == Stock.id)
+        .where(
+            Stock.is_active.is_(True),
+            Stock.market.in_(ranked_markets),
+            NewsArticle.published_at >= news_cutoff,
+            NewsArticle.published_at < news_end,
+        )
+        .order_by(NewsArticle.stock_id.asc(), NewsArticle.published_at.desc())
+    )
+    news_ids_by_stock: dict[int, set[int]] = defaultdict(set)
+    for article in news_result.scalars().all():
+        news_ids_by_stock[article.stock_id].add(article.id)
+
+    impact_result = await session.execute(
+        select(NewsStockImpact)
+        .join(NewsArticle, NewsStockImpact.news_article_id == NewsArticle.id)
+        .join(Stock, NewsStockImpact.stock_id == Stock.id)
+        .where(
+            Stock.is_active.is_(True),
+            Stock.market.in_(ranked_markets),
+            NewsArticle.published_at >= news_cutoff,
+            NewsArticle.published_at < news_end,
+        )
+        .order_by(NewsStockImpact.stock_id.asc(), NewsArticle.published_at.desc())
+    )
+    impact_scores_by_stock: dict[int, list[float]] = defaultdict(list)
+    for impact in impact_result.scalars().all():
+        if impact.impact_score is None:
+            continue
+        impact_scores_by_stock[impact.stock_id].append(float(impact.impact_score))
+
+    analysis_result = await session.execute(
+        select(AnalysisReport)
+        .join(Stock, AnalysisReport.stock_id == Stock.id)
+        .where(
+            Stock.is_active.is_(True),
+            Stock.market.in_(ranked_markets),
+            AnalysisReport.analysis_type == "daily",
+            AnalysisReport.analysis_date <= reference_trade_date,
+        )
+        .order_by(
+            AnalysisReport.stock_id.asc(),
+            AnalysisReport.analysis_date.desc(),
+            AnalysisReport.created_at.desc(),
+        )
+    )
+    latest_analysis_by_stock: dict[int, AnalysisReport] = {}
+    for report in analysis_result.scalars().all():
+        latest_analysis_by_stock.setdefault(report.stock_id, report)
+
+    candidates: list[dict] = []
+    total_eligible = 0
+    total_insufficient = 0
+
+    for stock in stocks:
+        prices = prices_by_stock.get(stock.id, [])
+        if len(prices) < minimum_price_points:
+            total_insufficient += 1
+            continue
+
+        first_close = float(prices[0].close)
+        latest_price = prices[-1]
+        latest_close = float(latest_price.close)
+        if first_close <= 0:
+            total_insufficient += 1
+            continue
+
+        total_eligible += 1
+        momentum_pct = ((latest_close - first_close) / first_close) * 100
+        previous_volumes = [price.volume for price in prices[:-1] if price.volume is not None]
+        average_previous_volume = (
+            sum(previous_volumes) / len(previous_volumes) if previous_volumes else None
+        )
+        volume_spike_ratio = (
+            latest_price.volume / average_previous_volume
+            if average_previous_volume and average_previous_volume > 0
+            else None
+        )
+
+        recent_news_count = len(news_ids_by_stock.get(stock.id, set()))
+        impact_scores = impact_scores_by_stock.get(stock.id, [])
+        average_impact_score = (
+            sum(impact_scores) / len(impact_scores) if impact_scores else None
+        )
+        latest_analysis = latest_analysis_by_stock.get(stock.id)
+        recommendation = latest_analysis.recommendation if latest_analysis else None
+
+        momentum_score = _clamp(momentum_pct * 0.8, -20.0, 20.0)
+        volume_score = _clamp(
+            ((volume_spike_ratio or 1.0) - 1.0) * 12.0,
+            -10.0,
+            12.0,
+        )
+        recent_news_score = min(recent_news_count * 2.0, 10.0)
+        news_impact_score = _clamp((average_impact_score or 0.0) * 12.0, -10.0, 10.0)
+        recommendation_score = _get_recommendation_score(recommendation)
+        total_score = _clamp(
+            50.0
+            + momentum_score
+            + volume_score
+            + recent_news_score
+            + news_impact_score
+            + recommendation_score,
+            0.0,
+            100.0,
+        )
+
+        reasons = [f"최근 {lookback_days}일 종가가 {momentum_pct:+.1f}% 움직였습니다."]
+        if volume_spike_ratio is not None:
+            reasons.append(
+                f"최신 거래량이 최근 평균의 {volume_spike_ratio:.2f}배입니다."
+            )
+        if recent_news_count > 0:
+            reasons.append(
+                f"최근 {news_window_days}일 관련 뉴스 {recent_news_count}건이 저장돼 있습니다."
+            )
+        if average_impact_score is not None:
+            reasons.append(
+                f"최근 뉴스 영향 점수 평균은 {average_impact_score:+.2f}입니다."
+            )
+        recommendation_label = _get_recommendation_label(recommendation)
+        if recommendation_label and latest_analysis is not None:
+            reasons.append(
+                "최신 일일 리포트는 "
+                f"{recommendation_label} 의견입니다. ({latest_analysis.analysis_date})"
+            )
+
+        candidates.append(
+            {
+                "ticker": stock.ticker,
+                "name": stock.name,
+                "market": stock.market,
+                "sector": stock.sector,
+                "score": _round_float(total_score),
+                "components": {
+                    "price_momentum_pct": _round_float(momentum_pct),
+                    "price_momentum_score": _round_float(momentum_score),
+                    "volume_spike_ratio": _round_float(volume_spike_ratio),
+                    "volume_spike_score": _round_float(volume_score),
+                    "recent_news_count": recent_news_count,
+                    "recent_news_score": _round_float(recent_news_score),
+                    "avg_news_impact_score": _round_float(average_impact_score),
+                    "news_impact_score": _round_float(news_impact_score),
+                    "latest_daily_recommendation": recommendation,
+                    "latest_daily_recommendation_score": _round_float(recommendation_score),
+                },
+                "reasons": reasons,
+                "latest_recommendation": recommendation,
+                "analysis_date": (
+                    str(latest_analysis.analysis_date) if latest_analysis else None
+                ),
+                "latest_close": _round_float(latest_close),
+                "latest_trade_date": str(latest_price.trade_date),
+            }
+        )
+
+    candidates.sort(key=lambda item: (-float(item["score"]), item["ticker"]))
+    limited_candidates = candidates[:limit]
+
+    return _build_screener_empty_response(
+        limit=limit,
+        lookback_days=lookback_days,
+        minimum_price_points=minimum_price_points,
+        reference_trade_date=reference_trade_date,
+        total_eligible=total_eligible,
+        total_insufficient=total_insufficient,
+        candidates=limited_candidates,
+    )
 
 
 # ──────────────────────────────────────────────

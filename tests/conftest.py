@@ -221,3 +221,17 @@ def portfolio_router_module(monkeypatch: pytest.MonkeyPatch):
 
     sys.modules.pop("app.routers.portfolio", None)
     return importlib.import_module("app.routers.portfolio")
+
+
+@pytest.fixture
+def screener_router_module(monkeypatch: pytest.MonkeyPatch):
+    fake_session_module = types.ModuleType("app.database.session")
+
+    async def fake_get_db():
+        yield None
+
+    fake_session_module.get_db = fake_get_db
+    monkeypatch.setitem(sys.modules, "app.database.session", fake_session_module)
+
+    sys.modules.pop("app.routers.screener", None)
+    return importlib.import_module("app.routers.screener")
