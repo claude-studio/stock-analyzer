@@ -756,7 +756,9 @@ async def get_news_impact_summary(
         if impact.impact_score is not None:
             scores.append(float(impact.impact_score))
 
-        recent_impacts.append(_serialize_impact(impact, title=title, published_at=published_at))
+        recent_impacts.append(
+            _serialize_impact(impact, title=title, published_at=published_at, url=url)
+        )
 
     avg_score = sum(scores) / len(scores) if scores else 0.0
 
@@ -767,7 +769,6 @@ async def get_news_impact_summary(
         "bearish_count": bearish_count,
         "neutral_count": neutral_count,
         "total_count": len(rows),
-        "total_news": len(rows),
         "avg_impact_score": round(avg_score, 3),
         "recent_impacts": recent_impacts[:10],
         "event_markers": recent_impacts[:50],
@@ -866,11 +867,11 @@ async def get_recent_news_with_stock(
             "news_category": a.news_category,
             "impact_summary": a.impact_summary,
             "sector": a.sector,
-            "stock_ticker": a.stock.ticker if a.stock else None,
-            "stock_name": a.stock.name if a.stock else None,
-            "impacts": [
-                _serialize_impact(imp)
-                for imp in a.stock_impacts
+        "stock_ticker": a.stock.ticker if a.stock else None,
+        "stock_name": a.stock.name if a.stock else None,
+        "impacts": [
+            _serialize_impact(imp)
+            for imp in a.stock_impacts
             ],
         }
         for a in articles
@@ -1490,10 +1491,12 @@ def _serialize_impact(
     impact: NewsStockImpact,
     title: str | None = None,
     published_at: datetime | None = None,
+    url: str | None = None,
 ) -> dict:
     return {
         "article_id": impact.news_article_id,
         "title": title,
+        "url": url,
         "stock_ticker": impact.stock.ticker if impact.stock else None,
         "stock_name": impact.stock.name if impact.stock else None,
         "impact_direction": impact.impact_direction,

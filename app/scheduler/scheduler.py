@@ -7,6 +7,7 @@ from app.scheduler.jobs import (
     job_claude_analysis,
     job_dart_collect,
     job_evaluate_accuracy,
+    job_evaluate_personal_alerts,
     job_krx_close,
     job_market_summary,
     job_news_collect,
@@ -97,6 +98,15 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         id="evaluate_accuracy",
         hour=7,
         minute=0,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        job_evaluate_personal_alerts,
+        "cron",
+        id="evaluate_personal_alerts",
+        day_of_week="mon-fri",
+        hour="9-18",
+        minute="0,30",
         replace_existing=True,
     )
     scheduler.add_job(

@@ -62,25 +62,31 @@ async def test_get_news_impact_summary_returns_canonical_public_contract(
         days=7,
     )
 
-    assert summary == {
-        "stock_id": 1,
-        "days": 7,
-        "bullish_count": 1,
-        "bearish_count": 0,
-        "neutral_count": 0,
-        "total_count": 1,
-        "avg_impact_score": 0.41,
-        "recent_impacts": [
-            {
-                "title": "카카오 신규 서비스 확대",
-                "impact_direction": "bullish",
-                "impact_score": 0.41,
-                "reason": "신규 서비스 확장 기대",
-                "published_at": "2026-04-27 10:00:00",
-                "url": "https://example.com/news-1",
-            }
-        ],
-    }
+    assert summary["stock_id"] == 1
+    assert summary["days"] == 7
+    assert summary["bullish_count"] == 1
+    assert summary["bearish_count"] == 0
+    assert summary["neutral_count"] == 0
+    assert summary["total_count"] == 1
+    assert summary["avg_impact_score"] == 0.41
+    assert "total_news" not in summary
+    assert len(summary["recent_impacts"]) == 1
+    assert len(summary["event_markers"]) == 1
+
+    recent = summary["recent_impacts"][0]
+    assert recent["title"] == "카카오 신규 서비스 확대"
+    assert recent["impact_direction"] == "bullish"
+    assert recent["impact_score"] == 0.41
+    assert recent["reason"] == "신규 서비스 확장 기대"
+    assert recent["published_at"] == "2026-04-27 10:00:00"
+    assert recent["url"] == "https://example.com/news-1"
+    assert "direction" not in recent
+    assert "score" not in recent
+
+    marker = summary["event_markers"][0]
+    assert marker["impact_direction"] == "bullish"
+    assert marker["impact_score"] == 0.41
+    assert marker["url"] == "https://example.com/news-1"
     assert route_response["total_count"] == 1
     assert "total_news" not in route_response
     assert route_response["recent_impacts"][0]["impact_direction"] == "bullish"
@@ -101,16 +107,16 @@ async def test_get_news_impact_summary_returns_zero_counts_when_no_impacts_exist
 
     summary = await get_news_impact_summary(test_db.session, stock.id, days=30)
 
-    assert summary == {
-        "stock_id": 1,
-        "days": 30,
-        "bullish_count": 0,
-        "bearish_count": 0,
-        "neutral_count": 0,
-        "total_count": 0,
-        "avg_impact_score": 0.0,
-        "recent_impacts": [],
-    }
+    assert summary["stock_id"] == 1
+    assert summary["days"] == 30
+    assert summary["bullish_count"] == 0
+    assert summary["bearish_count"] == 0
+    assert summary["neutral_count"] == 0
+    assert summary["total_count"] == 0
+    assert summary["avg_impact_score"] == 0.0
+    assert summary["recent_impacts"] == []
+    assert summary["event_markers"] == []
+    assert "total_news" not in summary
 
 
 async def test_get_news_detail_keeps_article_url_and_canonical_impact_fields(
@@ -146,12 +152,12 @@ async def test_get_news_detail_keeps_article_url_and_canonical_impact_fields(
     assert detail is not None
     assert detail["url"] == "https://example.com/news-2"
     assert detail["impact_score"] == 0.22
-    assert detail["impacts"] == [
-        {
-            "stock_ticker": "005930",
-            "stock_name": "삼성전자",
-            "impact_direction": "bullish",
-            "impact_score": 0.22,
-            "reason": "AI 투자 수혜 기대",
-        }
-    ]
+    assert len(detail["impacts"]) == 1
+    impact_payload = detail["impacts"][0]
+    assert impact_payload["stock_ticker"] == "005930"
+    assert impact_payload["stock_name"] == "삼성전자"
+    assert impact_payload["impact_direction"] == "bullish"
+    assert impact_payload["impact_score"] == 0.22
+    assert impact_payload["reason"] == "AI 투자 수혜 기대"
+    assert "direction" not in impact_payload
+    assert "score" not in impact_payload

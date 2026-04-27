@@ -54,28 +54,6 @@ function formatChangePct(val: number | null | undefined): string {
   return `${sign}${val.toFixed(2)}%`;
 }
 
-function formatReturn(val: number | null | undefined): string {
-  if (val == null) return "-";
-  const pct = val * 100;
-  return `${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
-}
-
-function dataStatusText(status: string | null | undefined): string {
-  if (!status || status === "ok") return "관측 완료";
-  if (status === "raw_price_fallback") return "원시 종가 기준";
-  if (status === "benchmark_missing") return "벤치마크 없음";
-  if (status === "price_missing") return "가격 없음";
-  if (status === "insufficient_window") return "관측 기간 부족";
-  return status;
-}
-
-function observedWindowReturn(
-  impact: NewsImpactSummary["recent_impacts"][number],
-  windowLabel: string,
-): number | null | undefined {
-  return impact.observed_windows?.find((item) => item.window === windowLabel)?.abnormal_return;
-}
-
 function changePctColor(val: number | null | undefined): string {
   if (val == null) return "text-gray-500";
   if (val > 0) return "text-green-500";

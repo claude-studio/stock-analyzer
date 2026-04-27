@@ -1,7 +1,7 @@
 """포트폴리오 보유 종목 테이블 추가
 
-Revision ID: 004
-Revises: 003
+Revision ID: 006
+Revises: 005
 Create Date: 2026-04-27
 """
 
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "004"
-down_revision = "003"
+revision = "006"
+down_revision = "005"
 branch_labels = None
 depends_on = None
 

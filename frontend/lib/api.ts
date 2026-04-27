@@ -160,6 +160,7 @@ export interface NewsArticle {
 export interface NewsImpact {
   article_id?: number;
   title?: string | null;
+  url?: string | null;
   stock_ticker: string;
   stock_name: string;
   impact_direction: string;
@@ -357,6 +358,122 @@ export interface ScreenerResponse {
   empty_state: ScreenerEmptyState;
 }
 
+export interface BacktestSummary {
+  start_date: string;
+  end_date: string;
+  initial_capital: number;
+  ending_capital: number;
+  total_return_percent: number;
+  completed_trades: number;
+  wins: number;
+  losses: number;
+  open_position: boolean;
+  event_count: number;
+}
+
+export interface BacktestTimelineEvent {
+  trade_date: string;
+  event_type: string;
+  price: number;
+  recommendation: string | null;
+  shares: number;
+  cash_balance: number;
+  position_value: number;
+  realized_return_percent?: number | null;
+  message: string;
+}
+
+export interface BacktestRunResponse {
+  ticker: string;
+  name: string;
+  strategy: string;
+  generated_at: string;
+  assumptions: string[];
+  limitations: string[];
+  summary: BacktestSummary;
+  timeline: BacktestTimelineEvent[];
+}
+
+export interface BacktestRunPayload {
+  ticker: string;
+  strategy: "daily_recommendation_follow";
+  start_date: string;
+  end_date: string;
+  initial_capital: number;
+}
+
+export interface AlertRule {
+  id: number;
+  ticker: string | null;
+  name: string;
+  rule_type: string;
+  direction: string | null;
+  threshold_value: number | null;
+  target_recommendation: string | null;
+  lookback_days: number;
+  is_active: boolean;
+  last_evaluated_at: string | null;
+  last_triggered_at: string | null;
+}
+
+export interface AlertRulePayload {
+  ticker: string;
+  name: string;
+  rule_type: "target_price" | "rsi_threshold" | "sentiment_change" | "recommendation_change";
+  direction?: string | null;
+  threshold_value?: number | null;
+  target_recommendation?: string | null;
+  lookback_days?: number;
+}
+
+export interface AlertRuleUpdatePayload {
+  name?: string;
+  direction?: string | null;
+  threshold_value?: number | null;
+  target_recommendation?: string | null;
+  lookback_days?: number;
+  is_active?: boolean;
+}
+
+export interface AlertEvent {
+  id: number;
+  rule_id: number;
+  ticker: string | null;
+  rule_type: string;
+  status: string;
+  observed_value: number | null;
+  observed_text: string | null;
+  baseline_value: number | null;
+  baseline_text: string | null;
+  threshold_value: number | null;
+  threshold_text: string | null;
+  observed_at: string | null;
+  message: string;
+  created_at: string | null;
+}
+
+export interface AlertEvaluationSummary {
+  rule_id: number;
+  ticker: string;
+  rule_type: string;
+  status: string;
+  observed_value: number | null;
+  observed_text: string | null;
+  baseline_value: number | null;
+  baseline_text: string | null;
+  threshold_value: number | null;
+  threshold_text: string | null;
+  observed_at: string | null;
+  message: string;
+}
+
+export interface AlertEvaluationResponse {
+  evaluated_count: number;
+  triggered_count: number;
+  triggered_events: AlertEvent[];
+  pending_rules: AlertEvaluationSummary[];
+}
+
 export async function fetchNewsDetail(
   newsId: number,
 ): Promise<NewsArticle> {
@@ -391,6 +508,56 @@ export async function fetchPersonalScreener(
   return fetchAPI<ScreenerResponse>(
     `/api/v1/screener?limit=${limit}&lookback_days=${lookbackDays}`,
   );
+}
+
+export async function runBacktest(
+  payload: BacktestRunPayload,
+): Promise<BacktestRunResponse> {
+  return fetchAPI<BacktestRunResponse>("/api/v1/backtests/run", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchAlertRules(): Promise<AlertRule[]> {
+  return fetchAPI<AlertRule[]>("/api/v1/alerts/rules");
+}
+
+export async function createAlertRule(
+  payload: AlertRulePayload,
+): Promise<AlertRule> {
+  return fetchAPI<AlertRule>("/api/v1/alerts/rules", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateAlertRule(
+  ruleId: number,
+  payload: AlertRuleUpdatePayload,
+): Promise<AlertRule> {
+  return fetchAPI<AlertRule>(`/api/v1/alerts/rules/${ruleId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAlertRule(
+  ruleId: number,
+): Promise<{ deleted: boolean; rule_id: number }> {
+  return fetchAPI<{ deleted: boolean; rule_id: number }>(`/api/v1/alerts/rules/${ruleId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchAlertEvents(limit: number = 20): Promise<AlertEvent[]> {
+  return fetchAPI<AlertEvent[]>(`/api/v1/alerts/events?limit=${limit}`);
+}
+
+export async function evaluateAlertRules(): Promise<AlertEvaluationResponse> {
+  return fetchAPI<AlertEvaluationResponse>("/api/v1/alerts/evaluate", {
+    method: "POST",
+  });
 }
 
 export async function createPortfolioHolding(

@@ -29,6 +29,7 @@ from app.collectors.us_collector import collect_us_ohlcv
 from app.core.config import settings
 from app.database.models import DailyPrice, NewsArticle
 from app.database.session import async_session_factory
+from app.service.alerts_service import evaluate_alert_rules
 from app.service.db_service import (
     bulk_insert_daily_prices,
     ensure_benchmark_stocks,
@@ -55,6 +56,33 @@ DISCLAIMER = (
     "투자 의사결정의 최종 책임은 사용자에게 있습니다."
 )
 
+
+
+async def job_evaluate_personal_alerts() -> None:
+    """저장된 데이터 기준으로 개인용 알림 규칙을 평가한다."""
+    started_at = datetime.now(tz=KST)
+    logger.info("job_started", job="evaluate_personal_alerts", started_at=started_at.isoformat())
+    try:
+        session_factory = async_session_factory() if callable(async_session_factory) else async_session_factory
+        async with session_factory as session:
+            try:
+                result = await evaluate_alert_rules(session)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+        completed_at = datetime.now(tz=KST)
+        logger.info(
+            "job_completed",
+            job="evaluate_personal_alerts",
+            started_at=started_at.isoformat(),
+            completed_at=completed_at.isoformat(),
+            elapsed_seconds=(completed_at - started_at).total_seconds(),
+            evaluated_count=result["evaluated_count"],
+            triggered_count=result["triggered_count"],
+        )
+    except Exception:
+        logger.exception("job_failed", job="evaluate_personal_alerts")
 
 
 async def job_pre_market() -> None:

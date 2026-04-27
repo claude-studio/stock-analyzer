@@ -1,6 +1,7 @@
 """Alembic migration safety tests."""
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -19,7 +20,15 @@ def _load_migration(filename: str) -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    fake_alembic = ModuleType("alembic")
+    fake_alembic.op = object()
+    original_alembic = sys.modules.get("alembic")
+    sys.modules["alembic"] = fake_alembic
     spec.loader.exec_module(module)
+    if original_alembic is None:
+        sys.modules.pop("alembic", None)
+    else:
+        sys.modules["alembic"] = original_alembic
     return module
 
 
