@@ -63,7 +63,11 @@ async def job_evaluate_personal_alerts() -> None:
     started_at = datetime.now(tz=KST)
     logger.info("job_started", job="evaluate_personal_alerts", started_at=started_at.isoformat())
     try:
-        session_factory = async_session_factory() if callable(async_session_factory) else async_session_factory
+        session_factory = (
+            async_session_factory()
+            if callable(async_session_factory)
+            else async_session_factory
+        )
         async with session_factory as session:
             try:
                 result = await evaluate_alert_rules(session)
@@ -677,7 +681,10 @@ async def job_market_summary() -> None:
 
         prompt = build_market_summary_prompt(
             kr_data=kr_data_full,
-            us_data="(미국 종목은 설정된 watchlist의 전일 종가만 제한 지원하며 시장 전반 요약 데이터는 제공하지 않음)",
+            us_data=(
+                "(미국 종목은 설정된 watchlist의 전일 종가만 제한 지원하며 "
+                "시장 전반 요약 데이터는 제공하지 않음)"
+            ),
             news_headlines=news_headlines,
         )
 
