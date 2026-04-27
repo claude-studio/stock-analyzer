@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { fetchAPI } from "@/lib/api";
+import { fetchAPI, fetchAnalysisHistory, fetchNewsImpactSummary } from "@/lib/api";
 import type {
+  AnalysisHistoryItem,
   Stock,
   AnalysisReport,
   DailyPrice,
@@ -12,7 +13,6 @@ import type {
   NewsImpactSummary,
   StockDetailResponse,
 } from "@/lib/api";
-import { fetchNewsImpactSummary } from "@/lib/api";
 import StockChartWrapper from "@/components/charts/StockChartWrapper";
 
 function formatNumber(val: number | null | undefined, opts?: Intl.NumberFormatOptions): string {
@@ -83,18 +83,49 @@ function sentimentDotColor(label: string | null | undefined): string {
   return "bg-gray-400";
 }
 
+function getRecommendationLabel(recommendation: string | null | undefined): string {
+  if (!recommendation) return "-";
+
+  const lower = recommendation.toLowerCase();
+  if (lower.includes("strong_buy")) return "강력 매수";
+  if (lower.includes("buy")) return "매수";
+  if (lower.includes("strong_sell")) return "강력 매도";
+  if (lower.includes("sell")) return "매도";
+  if (lower.includes("hold")) return "보유";
+  return recommendation;
+}
+
+function formatConfidence(value: number | null | undefined): string {
+  if (value == null) return "-";
+  return `${(value * 100).toFixed(0)}%`;
+}
+
+function formatSignedDelta(
+  value: number | null,
+  formatter: (delta: number) => string,
+): string {
+  if (value == null) return "비교 데이터 없음";
+  if (value === 0) return "변화 없음";
+  return formatter(value);
+}
+
+function getReportTypeLabel(analysisType: string | undefined): string {
+  if (analysisType === "daily") return "최종 일일 리포트";
+  return analysisType ?? "분석 리포트";
+}
+
 function RecommendationBadge({ recommendation }: { recommendation: string | null | undefined }) {
   if (!recommendation) return null;
   const lower = recommendation.toLowerCase();
   let bgColor = "bg-gray-700";
   let textColor = "text-gray-300";
-  let label = recommendation;
+  const label = getRecommendationLabel(recommendation);
 
-  if (lower.includes("strong_buy")) { bgColor = "bg-green-600"; textColor = "text-white"; label = "강력 매수"; }
-  else if (lower.includes("buy")) { bgColor = "bg-green-500/15"; textColor = "text-green-400"; label = "매수"; }
-  else if (lower.includes("strong_sell")) { bgColor = "bg-red-600"; textColor = "text-white"; label = "강력 매도"; }
-  else if (lower.includes("sell")) { bgColor = "bg-red-500/15"; textColor = "text-red-400"; label = "매도"; }
-  else if (lower.includes("hold")) { bgColor = "bg-yellow-500/15"; textColor = "text-yellow-400"; label = "보유"; }
+  if (lower.includes("strong_buy")) { bgColor = "bg-green-600"; textColor = "text-white"; }
+  else if (lower.includes("buy")) { bgColor = "bg-green-500/15"; textColor = "text-green-400"; }
+  else if (lower.includes("strong_sell")) { bgColor = "bg-red-600"; textColor = "text-white"; }
+  else if (lower.includes("sell")) { bgColor = "bg-red-500/15"; textColor = "text-red-400"; }
+  else if (lower.includes("hold")) { bgColor = "bg-yellow-500/15"; textColor = "text-yellow-400"; }
 
   return (
     <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-semibold ${bgColor} ${textColor}`}>
@@ -163,8 +194,10 @@ export default function StockDetailPage() {
   const [technical, setTechnical] = useState<TechnicalIndicators | null>(null);
   const [news, setNews] = useState<NewsArticle[]>([]);
   const [newsImpact, setNewsImpact] = useState<NewsImpactSummary | null>(null);
+  const [history, setHistory] = useState<AnalysisHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [techLoading, setTechLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(true);
 
   useEffect(() => {
     if (!ticker) return;
@@ -197,6 +230,17 @@ export default function StockDetailPage() {
       })
       .finally(() => {
         setLoading(false);
+      });
+
+    fetchAnalysisHistory(ticker)
+      .then((data) => {
+        setHistory(Array.isArray(data?.history) ? data.history : []);
+      })
+      .catch(() => {
+        setHistory([]);
+      })
+      .finally(() => {
+        setHistoryLoading(false);
       });
 
     // 기술적 지표 별도 호출
@@ -242,6 +286,26 @@ export default function StockDetailPage() {
     : null;
 
   const macdSignal = getMacdSignal(technical?.macd, technical?.macd_signal);
+  const latestHistory = history.length > 0 ? history[0] : null;
+  const previousHistory = history.length > 1 ? history[1] : null;
+  const oldestHistory = history.length > 0 ? history[history.length - 1] : null;
+  const confidenceTrend =
+    latestHistory?.confidence != null && previousHistory?.confidence != null
+      ? latestHistory.confidence - previousHistory.confidence
+      : null;
+  const targetPriceTrend =
+    latestHistory?.target_price != null && oldestHistory?.target_price != null
+      ? latestHistory.target_price - oldestHistory.target_price
+      : null;
+  const recommendationTrendLabel = latestHistory
+    ? previousHistory
+      ? `${getRecommendationLabel(previousHistory.recommendation)} → ${getRecommendationLabel(latestHistory.recommendation)}`
+      : getRecommendationLabel(latestHistory.recommendation)
+    : "-";
+  const historyCoverage =
+    latestHistory && oldestHistory
+      ? `${oldestHistory.analysis_date} ~ ${latestHistory.analysis_date}`
+      : null;
 
   return (
     <div className="space-y-8">
@@ -601,6 +665,139 @@ export default function StockDetailPage() {
           <p className="mt-1 text-xs text-gray-500">장 마감 후 일일 리포트가 생성되면 여기에 표시됩니다.</p>
         </div>
       )}
+
+      <div className="space-y-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">최종 일일 리포트 히스토리</h2>
+            <p className="mt-1 text-sm text-gray-400">
+              내부 analyst shard와 on-demand를 제외한 사용자용 최종 일일 리포트만 시간순으로 보여줍니다.
+            </p>
+          </div>
+          <p className="text-xs text-gray-500 tabular-nums">
+            {historyCoverage ?? "기록 없음"}
+            {history.length > 0 ? ` · ${history.length}건` : ""}
+          </p>
+        </div>
+
+        {historyLoading ? (
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {[1, 2, 3, 4].map((item) => (
+                <SkeletonBlock key={item} className="h-28" />
+              ))}
+            </div>
+            <SkeletonBlock className="h-52" />
+          </div>
+        ) : history.length > 0 ? (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border border-gray-800 bg-[#111111] p-4">
+                <p className="text-xs font-medium text-gray-400">최신 추천</p>
+                <div className="mt-3 flex items-center gap-3">
+                  <RecommendationBadge recommendation={latestHistory?.recommendation} />
+                  <span className="text-sm text-gray-500">{latestHistory?.analysis_date ?? "-"}</span>
+                </div>
+                <p className="mt-3 text-xs text-gray-500">가장 최근 최종 일일 리포트 기준</p>
+              </div>
+
+              <div className="rounded-lg border border-gray-800 bg-[#111111] p-4">
+                <p className="text-xs font-medium text-gray-400">추천 변화</p>
+                <p className="mt-3 text-lg font-semibold text-white">{recommendationTrendLabel}</p>
+                <p className="mt-2 text-xs text-gray-500">
+                  {previousHistory ? "직전 최종 리포트 대비" : "현재 비교 가능한 이전 기록이 없습니다."}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-gray-800 bg-[#111111] p-4">
+                <p className="text-xs font-medium text-gray-400">신뢰도 추세</p>
+                <p className="mt-3 text-2xl font-semibold tabular-nums text-white">
+                  {formatConfidence(latestHistory?.confidence)}
+                </p>
+                <p className="mt-2 text-xs text-gray-500">
+                  {formatSignedDelta(confidenceTrend, (delta) => {
+                    const sign = delta > 0 ? "+" : "";
+                    return `${sign}${(delta * 100).toFixed(0)}%p 직전 대비`;
+                  })}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-gray-800 bg-[#111111] p-4">
+                <p className="text-xs font-medium text-gray-400">목표가 추세</p>
+                <p className="mt-3 text-2xl font-semibold tabular-nums text-white">
+                  {formatNumber(latestHistory?.target_price, { maximumFractionDigits: 0 })}
+                </p>
+                <p className="mt-2 text-xs text-gray-500">
+                  {formatSignedDelta(targetPriceTrend, (delta) => {
+                    const sign = delta > 0 ? "+" : "";
+                    return `${sign}${formatNumber(delta, { maximumFractionDigits: 0 })} 최초 기록 대비`;
+                  })}
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-lg border border-gray-800 bg-[#111111]">
+              <div className="hidden grid-cols-[120px_130px_110px_140px_minmax(0,1fr)] gap-4 border-b border-gray-800 bg-[#0d0d0d] px-4 py-3 text-xs font-medium text-gray-400 md:grid">
+                <span>일자</span>
+                <span>추천</span>
+                <span>신뢰도</span>
+                <span>목표가</span>
+                <span>리포트 유형 / 출처</span>
+              </div>
+
+              <div className="divide-y divide-gray-800/80">
+                {history.map((report) => (
+                  <div
+                    key={`${report.analysis_date}-${report.analysis_type}-${report.created_at ?? "no-created-at"}`}
+                    className="flex flex-col gap-3 px-4 py-4 md:grid md:grid-cols-[120px_130px_110px_140px_minmax(0,1fr)] md:items-center md:gap-4"
+                  >
+                    <div>
+                      <p className="text-xs text-gray-500 md:hidden">일자</p>
+                      <p className="text-sm font-medium text-white">{report.analysis_date}</p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-gray-500 md:hidden">추천</p>
+                      <RecommendationBadge recommendation={report.recommendation} />
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-gray-500 md:hidden">신뢰도</p>
+                      <p className="text-sm font-medium tabular-nums text-white">
+                        {formatConfidence(report.confidence)}
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs text-gray-500 md:hidden">목표가</p>
+                      <p className="text-sm font-medium tabular-nums text-white">
+                        {formatNumber(report.target_price, { maximumFractionDigits: 0 })}
+                      </p>
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="text-xs text-gray-500 md:hidden">리포트 유형 / 출처</p>
+                      <p className="text-sm text-white">{getReportTypeLabel(report.analysis_type)}</p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {report.model_used ?? "모델 정보 없음"}
+                        {report.created_at ? ` · 생성 ${report.created_at}` : ""}
+                      </p>
+                      <p className="mt-2 line-clamp-2 text-sm text-gray-400">{report.summary}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="rounded-lg border border-gray-800 bg-[#111111] p-6">
+            <p className="text-sm text-gray-400">최종 일일 리포트 히스토리가 아직 없습니다.</p>
+            <p className="mt-1 text-xs text-gray-500">
+              온디맨드 분석이나 내부 analyst shard는 이 타임라인에 섞지 않습니다.
+            </p>
+          </div>
+        )}
+      </div>
 
       {/* 관련 뉴스 */}
       <div>

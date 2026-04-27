@@ -865,6 +865,25 @@ async def get_latest_analysis(
     return result.scalar_one_or_none()
 
 
+async def get_analysis_history(
+    session: AsyncSession,
+    stock_id: int,
+    analysis_type: str | None = "daily",
+) -> list[AnalysisReport]:
+    """종목의 사용자 노출용 분석 리포트 히스토리 조회."""
+    query = select(AnalysisReport).where(AnalysisReport.stock_id == stock_id)
+    if analysis_type is not None:
+        query = query.where(AnalysisReport.analysis_type == analysis_type)
+
+    result = await session.execute(
+        query.order_by(
+            AnalysisReport.analysis_date.desc(),
+            AnalysisReport.created_at.desc(),
+        )
+    )
+    return list(result.scalars().all())
+
+
 # ──────────────────────────────────────────────
 # CollectionLog
 # ──────────────────────────────────────────────

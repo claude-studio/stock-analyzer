@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.database.session import async_session_factory, get_db
 from app.routers import portfolio
 from app.service.db_service import (
+    get_analysis_history,
     get_daily_prices,
     get_latest_analysis,
     get_news_detail,
@@ -279,6 +280,27 @@ async def get_stock_analysis(ticker: str, session: DbSession) -> dict[str, Any]:
     return {
         "ticker": ticker,
         "analysis": _analysis_report_to_dict(report),
+    }
+
+
+@router.get("/stocks/{ticker}/analysis/history")
+async def get_stock_analysis_history(
+    ticker: str,
+    session: DbSession,
+) -> dict[str, Any]:
+    """최종 일일 리포트 히스토리를 반환한다."""
+    stock = await get_stock_by_ticker(session, ticker)
+    if not stock:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"종목을 찾을 수 없습니다: {ticker}",
+        )
+
+    history = await get_analysis_history(session, stock.id)
+
+    return {
+        "ticker": ticker,
+        "history": [_analysis_report_to_dict(report) for report in history],
     }
 
 

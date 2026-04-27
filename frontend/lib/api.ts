@@ -100,6 +100,17 @@ export interface AnalysisReport {
   created_at?: string | null;
 }
 
+export interface AnalysisHistoryItem extends AnalysisReport {
+  analysis_type: string;
+  model_used: string | null;
+  created_at: string | null;
+}
+
+export interface AnalysisHistoryResponse {
+  ticker: string;
+  history: AnalysisHistoryItem[];
+}
+
 export interface StockDetailResponse {
   stock: Stock | null;
   prices: DailyPrice[];
@@ -302,6 +313,14 @@ export async function fetchNewsImpactSummary(
 ): Promise<NewsImpactSummary> {
   return fetchAPI<NewsImpactSummary>(
     `/api/v1/stocks/${ticker}/news-impact?days=${days}`,
+  );
+}
+
+export async function fetchAnalysisHistory(
+  ticker: string,
+): Promise<AnalysisHistoryResponse> {
+  return fetchAPI<AnalysisHistoryResponse>(
+    `/api/v1/stocks/${ticker}/analysis/history`,
   );
 }
 
