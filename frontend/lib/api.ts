@@ -1,3 +1,25 @@
+const SERVER_API_URL = process.env.API_URL || "http://stock-api:8000";
+const CLIENT_API_URL = process.env.NEXT_PUBLIC_API_URL || "";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+
+export class APIError extends Error {
+  status: number;
+  detail: string | null;
+
+  constructor(status: number, detail?: string | null) {
+    super(detail ?? `API Error: ${status}`);
+    this.name = "APIError";
+    this.status = status;
+    this.detail = detail ?? null;
+  }
+}
+
+function getBaseUrl(): string {
+  if (typeof window === "undefined") {
+    return SERVER_API_URL;
+  }
+  return CLIENT_API_URL;
+}
 export async function fetchAPI<T>(
   path: string,
   options?: RequestInit,
@@ -13,16 +35,34 @@ export async function fetchAPI<T>(
   }
 
   try {
-    const res = await fetch(path, {
+    const base = getBaseUrl();
+    const res = await fetch(`${base}${path}`, {
       ...options,
       signal: controller.signal,
       headers: {
+        "X-API-Key": API_KEY,
         "Content-Type": "application/json",
         ...options?.headers,
       },
     });
 
-    if (!res.ok) throw new Error(`API Error: ${res.status}`);
+    if (!res.ok) {
+      let detail: string | null = null;
+
+      try {
+        const data = (await res.json()) as {
+          detail?: string;
+          message?: string;
+          error?: string;
+        };
+        detail = data.detail ?? data.message ?? data.error ?? null;
+      } catch {
+        detail = null;
+      }
+
+      throw new APIError(res.status, detail);
+    }
+
     return res.json();
   } finally {
     clearTimeout(timeout);
@@ -186,6 +226,70 @@ export interface WatchlistItem {
   analysis_date: string | null;
 }
 
+export interface PortfolioHolding {
+  id: number;
+  ticker: string;
+  name: string;
+  market: string;
+  currency: string;
+  quantity: number;
+  average_price: number;
+  invested_amount: number;
+  latest_trade_date: string | null;
+  latest_price: number | null;
+  latest_valuation: number | null;
+  unrealized_pnl: number | null;
+  unrealized_pnl_percent: number | null;
+  allocation_percent: number | null;
+  is_price_missing: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface PortfolioAllocationItem {
+  holding_id: number;
+  ticker: string;
+  name: string;
+  market: string;
+  currency: string;
+  latest_valuation: number | null;
+  allocation_percent: number | null;
+  is_price_missing: boolean;
+}
+
+export interface PortfolioCurrencyBreakdown {
+  currency: string;
+  invested_amount: number;
+  latest_valuation: number | null;
+  unrealized_pnl: number | null;
+  unrealized_pnl_percent: number | null;
+  has_missing_prices: boolean;
+}
+
+export interface PortfolioSummary {
+  invested_amount: number | null;
+  latest_valuation: number | null;
+  unrealized_pnl: number | null;
+  unrealized_pnl_percent: number | null;
+  has_missing_prices: boolean;
+  has_mixed_currencies: boolean;
+  currency_breakdown: PortfolioCurrencyBreakdown[];
+  holdings: PortfolioHolding[];
+  allocation: PortfolioAllocationItem[];
+}
+
+export interface PortfolioHoldingCreatePayload {
+  ticker: string;
+  quantity: number;
+  average_price: number;
+}
+
+export interface PortfolioHoldingUpdatePayload {
+  ticker?: string;
+  quantity?: number;
+  average_price?: number;
+}
+
 export async function fetchNewsDetail(
   newsId: number,
 ): Promise<NewsArticle> {
@@ -198,5 +302,39 @@ export async function fetchNewsImpactSummary(
 ): Promise<NewsImpactSummary> {
   return fetchAPI<NewsImpactSummary>(
     `/api/v1/stocks/${ticker}/news-impact?days=${days}`,
+  );
+}
+
+export async function fetchPortfolioSummary(): Promise<PortfolioSummary> {
+  return fetchAPI<PortfolioSummary>("/api/v1/portfolio/summary");
+}
+
+export async function createPortfolioHolding(
+  payload: PortfolioHoldingCreatePayload,
+): Promise<PortfolioHolding> {
+  return fetchAPI<PortfolioHolding>("/api/v1/portfolio/holdings", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePortfolioHolding(
+  holdingId: number,
+  payload: PortfolioHoldingUpdatePayload,
+): Promise<PortfolioHolding> {
+  return fetchAPI<PortfolioHolding>(`/api/v1/portfolio/holdings/${holdingId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deletePortfolioHolding(
+  holdingId: number,
+): Promise<{ deleted: boolean; holding_id: number }> {
+  return fetchAPI<{ deleted: boolean; holding_id: number }>(
+    `/api/v1/portfolio/holdings/${holdingId}`,
+    {
+      method: "DELETE",
+    },
   );
 }
