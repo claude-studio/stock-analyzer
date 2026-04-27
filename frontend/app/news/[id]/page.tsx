@@ -130,7 +130,7 @@ export default function NewsDetailPage() {
   const invalidNewsId = Number.isNaN(newsId);
 
   const [article, setArticle] = useState<NewsArticle | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!invalidNewsId);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -184,11 +184,11 @@ export default function NewsDetailPage() {
     );
   }
 
-  if (error || !article) {
+  if (invalidNewsId || error || !article) {
     return (
       <div className="max-w-4xl mx-auto">
         <div className="rounded-lg border border-gray-800 bg-[#111111] p-8 text-center">
-          <p className="text-sm text-gray-400">{error ?? "뉴스를 찾을 수 없습니다"}</p>
+          <p className="text-sm text-gray-400">{invalidNewsId ? "유효하지 않은 뉴스 ID" : error ?? "뉴스를 찾을 수 없습니다"}</p>
           <button
             onClick={() => router.push("/news")}
             className="mt-4 rounded-lg bg-gray-800 px-4 py-2 text-sm text-white hover:bg-gray-700 transition-colors"

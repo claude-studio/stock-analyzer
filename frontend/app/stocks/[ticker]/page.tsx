@@ -445,7 +445,7 @@ export default function StockDetailPage() {
       </div>
 
       {/* 뉴스 영향 요약 */}
-      {newsImpact && newsImpact.total_news > 0 && (
+      {newsImpact && (
         <div>
           <h2 className="text-lg font-semibold mb-4">최근 뉴스 영향과 관측 반응</h2>
           <div className="rounded-lg border border-[#1f1f1f] bg-[#111111] p-4">
@@ -464,7 +464,14 @@ export default function StockDetailPage() {
               </div>
             </div>
 
-            {newsImpact.avg_impact_score !== 0 && (
+            <div className="mb-4 text-center">
+              <span className="text-xs text-gray-500">총 기사 수 </span>
+              <span className="text-sm font-semibold tabular-nums text-white">
+                {newsImpact.total_count}
+              </span>
+            </div>
+
+            {newsImpact.total_count > 0 && newsImpact.avg_impact_score !== 0 && (
               <div className="mb-4 text-center">
                 <span className="text-xs text-gray-500">평균 영향 점수 </span>
                 <span className={`text-sm font-semibold tabular-nums ${
@@ -476,30 +483,50 @@ export default function StockDetailPage() {
               </div>
             )}
 
-            {newsImpact.recent_impacts.slice(0, 5).map((imp, idx) => (
-              <div key={idx} className="grid gap-2 py-3 border-t border-[#1f1f1f] md:grid-cols-[1fr_auto]">
-                <div className="flex items-center gap-2 min-w-0">
-                <span className={`text-xs font-bold shrink-0 ${
-                  imp.impact_direction === "bullish" ? "text-green-400" :
-                  imp.impact_direction === "bearish" ? "text-red-400" : "text-gray-400"
-                }`}>
-                  {imp.impact_direction === "bullish" ? "\u25B2" : imp.impact_direction === "bearish" ? "\u25BC" : "\u2013"}
-                </span>
-                <span className="text-sm flex-1 min-w-0 line-clamp-1 text-gray-300">{imp.title}</span>
-                </div>
-                <div className="flex flex-wrap items-center gap-3 text-xs tabular-nums">
-                  <span className="text-gray-500">관측일 {imp.effective_trading_date ?? "-"}</span>
-                  <span className={(imp.abnormal_return ?? 0) >= 0 ? "text-green-400" : "text-red-400"}>
-                    1D 초과 {formatReturn(imp.abnormal_return)}
-                  </span>
-                  <span className={(observedWindowReturn(imp, "0,+3D") ?? 0) >= 0 ? "text-green-400" : "text-red-400"}>
-                    3D 초과 {formatReturn(observedWindowReturn(imp, "0,+3D"))}
-                  </span>
-                  <span className="text-gray-500">{dataStatusText(imp.data_status)}</span>
-                  {imp.confounded && <span className="text-yellow-400">복합 이벤트</span>}
-                </div>
+            {newsImpact.total_count === 0 ? (
+              <div className="rounded-lg border border-[#1f1f1f] bg-black/10 p-4 text-center">
+                <p className="text-sm text-gray-400">최근 7일간 분석된 뉴스 영향이 없습니다.</p>
               </div>
-            ))}
+            ) : (
+              newsImpact.recent_impacts.slice(0, 5).map((imp, idx) => (
+                <div key={`${imp.title}-${idx}`} className="border-t border-[#1f1f1f] py-3">
+                  <div className="flex items-start gap-2">
+                    <span className={`mt-0.5 text-xs font-bold shrink-0 ${
+                      imp.impact_direction === "bullish" ? "text-green-400" :
+                      imp.impact_direction === "bearish" ? "text-red-400" : "text-gray-400"
+                    }`}>
+                      {imp.impact_direction === "bullish" ? "\u25B2" : imp.impact_direction === "bearish" ? "\u25BC" : "\u2013"}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      {imp.url ? (
+                        <a
+                          href={imp.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="line-clamp-1 text-sm text-gray-300 transition-colors hover:text-green-400"
+                        >
+                          {imp.title}
+                        </a>
+                      ) : (
+                        <p className="line-clamp-1 text-sm text-gray-300">{imp.title}</p>
+                      )}
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                        {imp.impact_score != null && (
+                          <span className={`font-medium ${
+                            imp.impact_direction === "bullish" ? "text-green-400" :
+                            imp.impact_direction === "bearish" ? "text-red-400" : "text-gray-400"
+                          }`}>
+                            {imp.impact_score >= 0 ? "+" : ""}{imp.impact_score.toFixed(2)}
+                          </span>
+                        )}
+                        {imp.published_at && <span>{relativeTime(imp.published_at)}</span>}
+                        {imp.reason && <span className="truncate">{imp.reason}</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}

@@ -333,8 +333,10 @@ async def get_stock_detail(ticker: str, session: DbSession) -> dict[str, Any]:
         "analysis": analysis_data,
         "news": [
             {
+                "id": n.id,
                 "title": n.title,
                 "source": n.source,
+                "url": n.url,
                 "published_at": str(n.published_at) if n.published_at else None,
                 "sentiment_label": n.sentiment_label,
                 "sentiment_score": _decimal_to_float(n.sentiment_score),

@@ -138,11 +138,20 @@ export interface NewsImpact {
   marker_label?: string | null;
 }
 
+export interface NewsImpactSummaryItem {
+  title: string;
+  impact_direction: string;
+  impact_score: number | null;
+  reason: string | null;
+  published_at: string | null;
+  url: string | null;
+}
+
 export interface NewsImpactSummary {
   ticker: string;
   name?: string;
-  total_count?: number;
-  total_news: number;
+  total_count: number;
+  total_news?: number;
   bullish_count: number;
   bearish_count: number;
   neutral_count: number;

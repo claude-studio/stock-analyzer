@@ -474,7 +474,12 @@ async def get_news_impact_summary(
     cutoff = datetime.now(tz=KST) - timedelta(days=days)
 
     stmt = (
-        select(NewsStockImpact, NewsArticle.title, NewsArticle.published_at)
+        select(
+            NewsStockImpact,
+            NewsArticle.title,
+            NewsArticle.published_at,
+            NewsArticle.url,
+        )
         .join(NewsArticle, NewsStockImpact.news_article_id == NewsArticle.id)
         .options(selectinload(NewsStockImpact.stock))
         .where(
@@ -490,9 +495,9 @@ async def get_news_impact_summary(
     bearish_count = 0
     neutral_count = 0
     scores: list[float] = []
-    reasons: list[dict] = []
+    recent_impacts: list[dict] = []
 
-    for impact, title, published_at in rows:
+    for impact, title, published_at, url in rows:
         if impact.impact_direction == "bullish":
             bullish_count += 1
         elif impact.impact_direction == "bearish":
@@ -503,7 +508,7 @@ async def get_news_impact_summary(
         if impact.impact_score is not None:
             scores.append(float(impact.impact_score))
 
-        reasons.append(_serialize_impact(impact, title=title, published_at=published_at))
+        recent_impacts.append(_serialize_impact(impact, title=title, published_at=published_at))
 
     avg_score = sum(scores) / len(scores) if scores else 0.0
 
@@ -516,8 +521,8 @@ async def get_news_impact_summary(
         "total_count": len(rows),
         "total_news": len(rows),
         "avg_impact_score": round(avg_score, 3),
-        "recent_impacts": reasons[:10],
-        "event_markers": reasons[:50],
+        "recent_impacts": recent_impacts[:10],
+        "event_markers": recent_impacts[:50],
     }
 
 
