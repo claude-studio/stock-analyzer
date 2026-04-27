@@ -20,6 +20,34 @@ function formatNumber(val: number | null | undefined, opts?: Intl.NumberFormatOp
   return val.toLocaleString("ko-KR", opts);
 }
 
+function formatPriceByMarket(
+  val: number | null | undefined,
+  market: string | null | undefined,
+): string {
+  if (val == null) return "-";
+  if (market === "US") {
+    return val.toLocaleString("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+
+  return formatNumber(val);
+}
+
+function marketSupportLabel(stock: Stock | null): string | null {
+  if (!stock) return null;
+  if (stock.market === "US") {
+    return stock.sector
+      ? `US / ${stock.sector} / USD 종가 기준 / 제한 지원`
+      : "US / USD 종가 기준 / 제한 지원";
+  }
+
+  return stock.sector ? `${stock.market} / ${stock.sector}` : stock.market;
+}
+
 function formatChangePct(val: number | null | undefined): string {
   if (val == null) return "-";
   const sign = val >= 0 ? "+" : "";
@@ -318,14 +346,14 @@ export default function StockDetailPage() {
             {analysis?.recommendation && <RecommendationBadge recommendation={analysis.recommendation} />}
           </div>
           {stock && (
-            <p className="mt-1 text-sm text-gray-400">{stock.market}{stock.sector ? ` / ${stock.sector}` : ""}</p>
+            <p className="mt-1 text-sm text-gray-400">{marketSupportLabel(stock)}</p>
           )}
         </div>
         <div className="text-right">
           {latestPrice ? (
             <>
               <p className="text-3xl font-semibold tabular-nums">
-                {formatNumber(latestPrice.close)}
+                {formatPriceByMarket(latestPrice.close, stock?.market)}
               </p>
               <div className="flex items-center justify-end gap-3 mt-1">
                 <span className={`text-sm font-medium tabular-nums ${changePctColor(changePct)}`}>
@@ -335,10 +363,14 @@ export default function StockDetailPage() {
                   거래량 {formatNumber(latestPrice.volume)}
                 </span>
               </div>
-              <p className="text-xs text-gray-500 mt-0.5">{latestPrice.trade_date} 종가</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {latestPrice.trade_date} {stock?.market === "US" ? "USD 종가" : "종가"}
+              </p>
             </>
           ) : (
-            <p className="text-sm text-gray-500">가격 데이터 없음</p>
+            <p className="text-sm text-gray-500">
+              {stock?.market === "US" ? "US 종가 데이터 없음 (제한 지원)" : "가격 데이터 없음"}
+            </p>
           )}
         </div>
       </div>

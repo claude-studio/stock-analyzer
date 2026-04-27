@@ -13,6 +13,10 @@ _MAX_RETRIES = 3
 _RETRY_DELAYS = [2, 4, 8]
 
 
+def _normalize_us_ticker(ticker: str) -> str:
+    return ticker.strip().upper()
+
+
 def _collect_us_ohlcv_sync(
     tickers: list[str], period: str
 ) -> pd.DataFrame:
@@ -23,7 +27,10 @@ def _collect_us_ohlcv_sync(
         period=period,
     )
     frames: list[dict] = []
-    for ticker in tickers:
+    for raw_ticker in tickers:
+        ticker = _normalize_us_ticker(raw_ticker)
+        if not ticker:
+            continue
         for attempt in range(_MAX_RETRIES):
             try:
                 df = yf.download(
@@ -91,7 +98,10 @@ def _collect_us_intraday_sync(tickers: list[str]) -> pd.DataFrame:
     """미국 주식 60분봉 스냅샷을 티커별 개별 다운로드로 수집한다."""
     logger.info("us_intraday_collecting", tickers=tickers)
     frames: list[dict] = []
-    for ticker in tickers:
+    for raw_ticker in tickers:
+        ticker = _normalize_us_ticker(raw_ticker)
+        if not ticker:
+            continue
         try:
             df = yf.download(
                 tickers=ticker,

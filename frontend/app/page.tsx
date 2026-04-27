@@ -135,7 +135,8 @@ export default function DashboardPage() {
       {/* 헤더 */}
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">대시보드</h1>
-        <p className="mt-1 text-sm text-gray-400">시장 개요 / 관심 종목 / 뉴스</p>
+        <p className="mt-1 text-sm text-gray-400">KRX 시장 개요 / 관심 종목 / 뉴스</p>
+        <p className="mt-2 text-xs text-gray-500">미국 종목은 종목 목록·상세 화면에서만 제한 지원됩니다.</p>
       </div>
 
       {/* 상단: KOSPI / KOSDAQ 지수 카드 */}
@@ -176,7 +177,10 @@ export default function DashboardPage() {
       {/* 중단: 관심 종목 워치리스트 */}
       <div>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">관심 종목</h2>
+          <div>
+            <h2 className="text-lg font-semibold">관심 종목</h2>
+            <p className="mt-1 text-xs text-gray-500">대시보드 요약은 현재 KRX 관심 종목 기준입니다.</p>
+          </div>
           <Link href="/stocks" className="text-sm text-gray-400 hover:text-white transition-colors">
             전체 보기 &rarr;
           </Link>
@@ -225,8 +229,8 @@ export default function DashboardPage() {
           </div>
         ) : (
           <div className="rounded-lg border border-gray-800 bg-[#111111] p-6 text-center">
-            <p className="text-sm text-gray-400">관심 종목이 없습니다.</p>
-            <p className="mt-1 text-xs text-gray-500">종목 목록에서 관심 종목을 등록하세요.</p>
+            <p className="text-sm text-gray-400">KRX 관심 종목이 없습니다.</p>
+            <p className="mt-1 text-xs text-gray-500">종목 목록에서 관심 종목을 등록하세요. 미국 종목은 제한 지원됩니다.</p>
           </div>
         )}
       </div>

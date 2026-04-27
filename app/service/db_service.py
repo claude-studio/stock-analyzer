@@ -34,6 +34,11 @@ KST = ZoneInfo("Asia/Seoul")
 
 US_MARKETS = {"NASDAQ", "NYSE", "AMEX", "ARCA", "BATS", "OTC", "US"}
 KR_MARKETS = {"KRX", "KOSPI", "KOSDAQ", "KONEX"}
+_US_WATCHLIST_BASELINE: dict[str, dict[str, str | None]] = {
+    "AAPL": {"name": "Apple Inc.", "sector": "Technology"},
+    "QQQ": {"name": "Invesco QQQ Trust", "sector": "ETF"},
+    "SPY": {"name": "SPDR S&P 500 ETF Trust", "sector": "ETF"},
+}
 
 
 # ──────────────────────────────────────────────
@@ -80,6 +85,52 @@ async def upsert_stocks(session: AsyncSession, df: pd.DataFrame) -> int:
     await session.execute(stmt)
     await session.flush()
     logger.info("stocks_upserted", count=len(rows))
+    return len(rows)
+
+
+async def sync_configured_us_watchlist_stocks(
+    session: AsyncSession,
+    tickers: list[str],
+) -> int:
+    """설정된 미국 watchlist 심볼만 최소 메타데이터로 stock master에 동기화한다."""
+    normalized_tickers: list[str] = []
+    seen: set[str] = set()
+    for ticker in tickers:
+        normalized = str(ticker).strip().upper()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_tickers.append(normalized)
+
+    if not normalized_tickers:
+        return 0
+
+    rows = []
+    for ticker in normalized_tickers:
+        metadata = _US_WATCHLIST_BASELINE.get(ticker, {})
+        rows.append(
+            {
+                "ticker": ticker,
+                "name": metadata.get("name") or ticker,
+                "market": "US",
+                "sector": metadata.get("sector"),
+                "is_active": True,
+            }
+        )
+
+    stmt = pg_insert(Stock).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["ticker"],
+        set_={
+            "name": stmt.excluded.name,
+            "market": stmt.excluded.market,
+            "sector": stmt.excluded.sector,
+            "is_active": True,
+        },
+    )
+    await session.execute(stmt)
+    await session.flush()
+    logger.info("us_watchlist_stocks_synced", count=len(rows), tickers=normalized_tickers)
     return len(rows)
 
 

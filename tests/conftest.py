@@ -5,9 +5,11 @@ import sys
 import types
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, func, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.database.models import Base
@@ -16,6 +18,7 @@ if "pandas" not in sys.modules:
     fake_pandas = types.ModuleType("pandas")
     fake_pandas.DataFrame = lambda rows: rows
     fake_pandas.Series = object
+    fake_pandas.Timestamp = datetime
     fake_pandas.concat = lambda values, axis=0: values
     fake_pandas.isna = lambda value: value is None
     sys.modules["pandas"] = fake_pandas
@@ -48,8 +51,8 @@ class SyncAsyncSessionAdapter:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    async def execute(self, statement):
-        return self._session.execute(statement)
+    async def execute(self, statement, *args, **kwargs):
+        return self._session.execute(statement, *args, **kwargs)
 
     async def get(self, model, ident):
         return self._session.get(model, ident)
@@ -71,6 +74,53 @@ class SyncAsyncSessionAdapter:
 
     async def delete(self, instance) -> None:
         self._session.delete(instance)
+
+
+def _build_sqlite_insert_with_ids(sync_session: Session):
+    next_ids: dict[str, int] = {}
+
+    def _resolve_table(target):
+        return getattr(target, "__table__", target)
+
+    def _next_id(table_name: str, column) -> int:
+        cached = next_ids.get(table_name)
+        if cached is None:
+            with sync_session.no_autoflush:
+                db_max = sync_session.execute(select(func.max(column))).scalar_one_or_none() or 0
+            cached = int(db_max) + 1
+        next_ids[table_name] = cached + 1
+        return cached
+
+    class InsertProxy:
+        def __init__(self, table) -> None:
+            self._table = _resolve_table(table)
+            self._stmt = sqlite_insert(self._table)
+
+        def values(self, rows):
+            normalized_rows = rows
+            if isinstance(rows, dict):
+                normalized_rows = [rows]
+
+            rows_with_ids = []
+            for row in normalized_rows:
+                row_dict = dict(row)
+                if "id" in self._table.c and row_dict.get("id") is None:
+                    row_dict["id"] = _next_id(self._table.name, self._table.c.id)
+                rows_with_ids.append(row_dict)
+
+            self._stmt = self._stmt.values(rows_with_ids)
+            return self
+
+        def on_conflict_do_update(self, *args, **kwargs):
+            return self._stmt.on_conflict_do_update(*args, **kwargs)
+
+        def __getattr__(self, item):
+            return getattr(self._stmt, item)
+
+    def _factory(table):
+        return InsertProxy(table)
+
+    return _factory
 
 
 @dataclass
@@ -97,12 +147,17 @@ def test_db() -> Iterator[TestDb]:
             id_counters[table_name] = id_counters.get(table_name, 0) + 1
             obj.id = id_counters[table_name]
 
+    db_service_module = importlib.import_module("app.service.db_service")
+    original_insert = db_service_module.pg_insert
+    db_service_module.pg_insert = _build_sqlite_insert_with_ids(sync_session)
+
     try:
         yield TestDb(
             session=SyncAsyncSessionAdapter(sync_session),
             sync_session=sync_session,
         )
     finally:
+        db_service_module.pg_insert = original_insert
         sync_session.close()
         engine.dispose()
 

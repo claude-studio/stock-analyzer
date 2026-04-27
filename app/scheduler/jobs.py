@@ -40,6 +40,7 @@ from app.service.db_service import (
     log_collection,
     refresh_news_observed_reactions,
     save_analysis_report,
+    sync_configured_us_watchlist_stocks,
     upsert_news_articles,
     upsert_stocks,
 )
@@ -63,7 +64,12 @@ async def job_pre_market() -> None:
     try:
         df = await collect_stock_listing()
         async with async_session_factory() as session:
-            count = await upsert_stocks(session, df)
+            kr_count = await upsert_stocks(session, df)
+            us_count = await sync_configured_us_watchlist_stocks(
+                session,
+                settings.US_WATCHLIST,
+            )
+            count = kr_count + us_count
             completed_at = datetime.now(tz=KST)
             await log_collection(
                 session,
@@ -555,6 +561,7 @@ async def job_us_close() -> None:
         data["date"] = today
         async with async_session_factory() as session:
             await ensure_benchmark_stocks(session)
+            await sync_configured_us_watchlist_stocks(session, settings.US_WATCHLIST)
             stock_id_map = await get_stock_id_map(session)
             count = await bulk_insert_daily_prices(session, data, stock_id_map, market="US")
             completed_at = datetime.now(tz=KST)
@@ -642,7 +649,7 @@ async def job_market_summary() -> None:
 
         prompt = build_market_summary_prompt(
             kr_data=kr_data_full,
-            us_data="(미국 시장 데이터 별도 수집 필요)",
+            us_data="(미국 종목은 설정된 watchlist의 전일 종가만 제한 지원하며 시장 전반 요약 데이터는 제공하지 않음)",
             news_headlines=news_headlines,
         )
 

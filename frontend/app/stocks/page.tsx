@@ -40,7 +40,8 @@ export default function StocksPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">종목 목록</h1>
-        <p className="mt-1 text-sm text-gray-400">등록된 관심 종목 현황</p>
+        <p className="mt-1 text-sm text-gray-400">등록된 종목 현황</p>
+        <p className="mt-2 text-xs text-gray-500">KRX 중심으로 운영되며 미국 종목은 설정된 watchlist 심볼만 제한 지원됩니다.</p>
       </div>
 
       {/* 검색 / 필터 */}
@@ -126,6 +127,9 @@ export default function StocksPage() {
         </div>
       )}
 
+      <p className="text-xs text-gray-500 tabular-nums">
+        미국 종목 가격은 USD 종가 기준으로 제한 제공됩니다.
+      </p>
       <p className="text-xs text-gray-500 tabular-nums">
         총 {filtered.length}개 / 전체 {stocks.length}개
       </p>
