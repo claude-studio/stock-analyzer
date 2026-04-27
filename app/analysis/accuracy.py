@@ -15,6 +15,7 @@ _BUY_RECOMMENDATIONS = {"buy", "strong_buy"}
 _SELL_RECOMMENDATIONS = {"sell", "strong_sell"}
 _HOLD_THRESHOLD = Decimal("0.03")
 _TRADE_COST = Decimal("0.005")  # 편도 0.5% 거래비용 가정 (매수 0.015% + 매도 0.25% + 슬리피지 0.1%)
+_USER_FACING_ANALYSIS_TYPE = "daily"
 
 
 def _judge_hit(recommendation: str, actual_return: Decimal | None) -> bool | None:
@@ -72,6 +73,7 @@ async def evaluate_past_analyses(session: AsyncSession, lookback_days: int = 7) 
         .join(Stock, AnalysisReport.stock_id == Stock.id)
         .where(
             AnalysisReport.analysis_date == target_date,
+            AnalysisReport.analysis_type == _USER_FACING_ANALYSIS_TYPE,
             AnalysisReport.id.notin_(existing_ids_subq),
         )
     )
@@ -182,7 +184,10 @@ async def get_accuracy_stats(session: AsyncSession, days: int = 90) -> dict:
             func.count(case((AccuracyTracker.is_hit_30d.is_(True), 1))).label("hit_30d"),
             func.count(case((AccuracyTracker.is_hit_30d.is_(False), 1))).label("miss_30d"),
         )
+        .join(AnalysisReport, AccuracyTracker.analysis_report_id == AnalysisReport.id)
         .where(AccuracyTracker.created_at >= cutoff)
+        .where(AnalysisReport.analysis_type == _USER_FACING_ANALYSIS_TYPE)
+        .where(AnalysisReport.analysis_date >= cutoff)
     )
     result = await session.execute(total_stmt)
     row = result.one()
@@ -210,7 +215,10 @@ async def get_accuracy_stats(session: AsyncSession, days: int = 90) -> dict:
                 case((AccuracyTracker.is_hit_30d.isnot(None), 1))
             ).label("evaluated_30d"),
         )
+        .join(AnalysisReport, AccuracyTracker.analysis_report_id == AnalysisReport.id)
         .where(AccuracyTracker.created_at >= cutoff)
+        .where(AnalysisReport.analysis_type == _USER_FACING_ANALYSIS_TYPE)
+        .where(AnalysisReport.analysis_date >= cutoff)
         .group_by(AccuracyTracker.recommendation)
     )
     rec_result = await session.execute(by_rec_stmt)

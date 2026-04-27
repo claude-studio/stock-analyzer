@@ -51,7 +51,7 @@ async def get_accuracy(
     session: DbSession,
     days: int = Query(default=90, ge=7, le=365, description="조회 기간 (일)"),
 ) -> dict[str, Any]:
-    """추천 적중률 통계를 반환한다."""
+    """최종 일일 추천 기준 적중률 통계를 반환한다."""
     stats = await get_accuracy_stats(session, days)
 
     def _convert(v: Any) -> Any:
