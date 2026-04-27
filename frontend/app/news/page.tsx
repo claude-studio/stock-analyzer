@@ -118,7 +118,7 @@ export default function NewsPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {/* 헤더 */}
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">뉴스 피드</h1>

@@ -37,7 +37,7 @@ export default function StocksPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">종목 목록</h1>
         <p className="mt-1 text-sm text-gray-400">등록된 종목 현황</p>

@@ -131,7 +131,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="min-w-0 space-y-8">
       {/* 헤더 */}
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">대시보드</h1>
@@ -338,9 +338,9 @@ export default function DashboardPage() {
                     <p className="text-xs font-medium text-gray-400 mb-2">스케줄 ({health.jobs.length}개)</p>
                     <div className="space-y-1.5">
                       {health.jobs.map((job) => (
-                        <div key={job.id} className="flex items-center justify-between text-xs">
-                          <span className="font-mono text-gray-300">{job.id}</span>
-                          <span className="tabular-nums text-gray-500">{job.next_run}</span>
+                        <div key={job.id} className="flex min-w-0 items-center justify-between gap-3 text-xs">
+                          <span className="min-w-0 truncate font-mono text-gray-300">{job.id}</span>
+                          <span className="shrink-0 tabular-nums text-gray-500">{job.next_run}</span>
                         </div>
                       ))}
                     </div>

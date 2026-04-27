@@ -32,7 +32,7 @@ export default function AccuracyPage() {
   const hasEvaluatedStats = (stats?.total ?? 0) > 0;
 
   return (
-    <div className="space-y-8">
+    <div className="min-w-0 space-y-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">최종 일일 추천 적중률</h1>
         <p className="mt-1 text-sm text-gray-400">

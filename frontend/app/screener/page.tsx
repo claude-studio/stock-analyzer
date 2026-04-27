@@ -234,7 +234,7 @@ export default function ScreenerPage() {
   }, []);
 
   return (
-    <div className="space-y-8">
+    <div className="min-w-0 space-y-8">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">개인 아이디어 스크리너</h1>
         <p className="mt-1 text-sm text-gray-400">

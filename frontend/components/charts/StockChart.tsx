@@ -212,7 +212,7 @@ export default function StockChart({ ticker }: StockChartProps) {
                     관측일 {event.effective_trading_date ?? "-"} · {event.benchmark ?? "benchmark"} 대비 · {statusLabel(event.data_status)}
                   </p>
                 </div>
-                <div className="flex items-center gap-4 text-right tabular-nums">
+                <div className="grid grid-cols-3 gap-3 text-left tabular-nums sm:flex sm:items-center sm:gap-4 sm:text-right">
                   <div>
                     <p className="text-gray-500">종목</p>
                     <p className="text-gray-200">{formatReturn(event.stock_return)}</p>

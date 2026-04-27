@@ -168,14 +168,14 @@ export default function NewsDetailPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6 max-w-4xl mx-auto">
+      <div className="mx-auto max-w-4xl space-y-6">
         <SkeletonBlock className="h-12" />
         <SkeletonBlock className="h-8" />
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <SkeletonBlock className="h-32" />
           <SkeletonBlock className="h-32" />
         </div>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <SkeletonBlock className="h-36" />
           <SkeletonBlock className="h-36" />
           <SkeletonBlock className="h-36" />
@@ -186,7 +186,7 @@ export default function NewsDetailPage() {
 
   if (invalidNewsId || error || !article) {
     return (
-      <div className="max-w-4xl mx-auto">
+      <div className="mx-auto max-w-4xl">
         <div className="rounded-lg border border-gray-800 bg-[#111111] p-8 text-center">
           <p className="text-sm text-gray-400">{invalidNewsId ? "유효하지 않은 뉴스 ID" : error ?? "뉴스를 찾을 수 없습니다"}</p>
           <button
@@ -216,10 +216,10 @@ export default function NewsDetailPage() {
     : null;
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
+    <div className="mx-auto max-w-4xl min-w-0 space-y-6">
       {/* 헤더 */}
       <div>
-        <div className="flex items-center gap-3 mb-4">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
           <button
             onClick={() => router.push("/news")}
             className="text-sm text-gray-400 hover:text-white transition-colors"

@@ -28,6 +28,29 @@ const NAV_ITEMS = [
   { href: "/accuracy", label: "적중률", icon: "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" },
 ];
 
+function NavigationLinks({ mobile = false }: { mobile?: boolean }) {
+  return NAV_ITEMS.map((item) => (
+    <Link
+      key={item.href}
+      href={item.href}
+      className={mobile
+        ? "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg border border-gray-800 bg-[#111111] px-3 py-2 text-sm font-medium text-gray-300 transition-colors hover:border-gray-700 hover:text-white"
+        : "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-400 transition-colors hover:bg-gray-800/50 hover:text-white"}
+    >
+      <svg
+        className={mobile ? "h-4 w-4 shrink-0" : "h-5 w-5 shrink-0"}
+        fill="none"
+        viewBox="0 0 24 24"
+        strokeWidth={1.5}
+        stroke="currentColor"
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
+      </svg>
+      {item.label}
+    </Link>
+  ));
+}
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -38,9 +61,34 @@ export default function RootLayout({
       lang="ko"
       className={`${inter.variable} ${geistMono.variable} dark h-full antialiased`}
     >
-      <body className="min-h-full flex">
+      <body className="min-h-full bg-[#0a0a0a] text-[#ededed]">
+        <header className="sticky top-0 z-40 border-b border-gray-800 bg-[#0d0d0d]/95 backdrop-blur lg:hidden">
+          <div className="px-4 py-3">
+            <div className="flex items-center gap-2">
+              <svg
+                className="h-6 w-6 text-green-500"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={2}
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+              </svg>
+              <span className="text-base font-semibold tracking-tight text-white">
+                Stock Analyzer
+              </span>
+            </div>
+          </div>
+
+          <nav aria-label="모바일 내비게이션" className="overflow-x-auto border-t border-gray-800 px-4 py-3">
+            <div className="flex min-w-max gap-2">
+              <NavigationLinks mobile />
+            </div>
+          </nav>
+        </header>
+
         {/* 사이드바 */}
-        <aside className="fixed inset-y-0 left-0 z-50 w-64 border-r border-gray-800 bg-[#0d0d0d] flex flex-col">
+        <aside className="fixed inset-y-0 left-0 z-50 hidden w-64 flex-col border-r border-gray-800 bg-[#0d0d0d] lg:flex">
           <div className="flex h-16 items-center gap-2 px-6 border-b border-gray-800">
             <svg
               className="h-6 w-6 text-green-500"
@@ -56,25 +104,8 @@ export default function RootLayout({
             </span>
           </div>
 
-          <nav className="flex-1 px-3 py-4 space-y-1">
-            {NAV_ITEMS.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-400 transition-colors hover:bg-gray-800/50 hover:text-white"
-              >
-                <svg
-                  className="h-5 w-5 shrink-0"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={1.5}
-                  stroke="currentColor"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
-                </svg>
-                {item.label}
-              </Link>
-            ))}
+          <nav aria-label="기본 내비게이션" className="flex-1 space-y-1 px-3 py-4">
+            <NavigationLinks />
           </nav>
 
           <div className="border-t border-gray-800 px-4 py-3">
@@ -84,8 +115,8 @@ export default function RootLayout({
         </aside>
 
         {/* 메인 콘텐츠 */}
-        <main className="ml-64 flex-1 min-h-screen">
-          <div className="mx-auto max-w-7xl px-6 py-8">
+        <main className="min-h-screen min-w-0 lg:ml-64">
+          <div className="mx-auto min-w-0 max-w-7xl px-4 py-4 sm:px-6 sm:py-6 lg:px-6 lg:py-8">
             {children}
           </div>
         </main>

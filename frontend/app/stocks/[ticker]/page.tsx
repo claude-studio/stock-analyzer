@@ -314,11 +314,11 @@ export default function StockDetailPage() {
       : null;
 
   return (
-    <div className="space-y-8">
+    <div className="min-w-0 space-y-8">
       {/* 헤더: 종목명 + 티커 + 현재가 + 전일비 + 거래량 */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <h1 className="text-2xl font-semibold tracking-tight">{stock?.name ?? ticker}</h1>
             <span className="rounded bg-gray-800 px-2 py-0.5 font-mono text-sm text-gray-400">{ticker}</span>
             {analysis?.recommendation && <RecommendationBadge recommendation={analysis.recommendation} />}
@@ -327,13 +327,13 @@ export default function StockDetailPage() {
             <p className="mt-1 text-sm text-gray-400">{marketSupportLabel(stock)}</p>
           )}
         </div>
-        <div className="text-right">
+        <div className="sm:text-right">
           {latestPrice ? (
             <>
               <p className="text-3xl font-semibold tabular-nums">
                 {formatPriceByMarket(latestPrice.close, stock?.market)}
               </p>
-              <div className="flex items-center justify-end gap-3 mt-1">
+              <div className="mt-1 flex flex-wrap items-center gap-3 sm:justify-end">
                 <span className={`text-sm font-medium tabular-nums ${changePctColor(changePct)}`}>
                   {formatChangePct(changePct)}
                 </span>
@@ -354,7 +354,7 @@ export default function StockDetailPage() {
       </div>
 
       {/* 차트 영역 */}
-      <div className="rounded-lg border border-gray-800 bg-[#111111] p-6">
+      <div className="rounded-lg border border-gray-800 bg-[#111111] p-4 sm:p-6">
         <p className="text-sm font-medium text-gray-400 mb-4">가격 차트</p>
         <StockChartWrapper ticker={ticker} />
       </div>
@@ -523,7 +523,7 @@ export default function StockDetailPage() {
         <div>
           <h2 className="text-lg font-semibold mb-4">최근 뉴스 영향과 관측 반응</h2>
           <div className="rounded-lg border border-[#1f1f1f] bg-[#111111] p-4">
-            <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
               <div className="text-center">
                 <div className="text-2xl font-bold text-green-400">{newsImpact.bullish_count}</div>
                 <div className="text-xs text-gray-500">긍정</div>
