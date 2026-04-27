@@ -42,14 +42,21 @@ interface FormErrors {
   initialCapital?: string;
 }
 
+function formatLocalDateForInput(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function getTodayDateString(): string {
-  return new Date().toISOString().slice(0, 10);
+  return formatLocalDateForInput(new Date());
 }
 
 function getDefaultStartDateString(): string {
   const target = new Date();
   target.setDate(target.getDate() - 30);
-  return target.toISOString().slice(0, 10);
+  return formatLocalDateForInput(target);
 }
 
 const INITIAL_BACKTEST_FORM: BacktestFormState = {
