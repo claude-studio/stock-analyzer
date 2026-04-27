@@ -33,6 +33,7 @@ class Stock(Base):
     daily_prices: Mapped[list["DailyPrice"]] = relationship(back_populates="stock")
     news_articles: Mapped[list["NewsArticle"]] = relationship(back_populates="stock")
     analysis_reports: Mapped[list["AnalysisReport"]] = relationship(back_populates="stock")
+    portfolio_holdings: Mapped[list["PortfolioHolding"]] = relationship(back_populates="stock")
 
 
 class DailyPrice(Base):
@@ -226,3 +227,25 @@ class StockRelation(Base):
 
     source_stock: Mapped["Stock"] = relationship(foreign_keys=[source_stock_id])
     target_stock: Mapped["Stock"] = relationship(foreign_keys=[target_stock_id])
+
+
+class PortfolioHolding(Base):
+    """단일 사용자 수동 포트폴리오 보유 종목."""
+
+    __tablename__ = "portfolio_holdings"
+    __table_args__ = (Index("ix_portfolio_holdings_stock_id", "stock_id", unique=True),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id", ondelete="CASCADE"))
+    market: Mapped[str] = mapped_column(String(20))
+    currency: Mapped[str] = mapped_column(String(10))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+    average_price: Mapped[Decimal] = mapped_column(Numeric(18, 4))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    stock: Mapped["Stock"] = relationship(back_populates="portfolio_holdings")

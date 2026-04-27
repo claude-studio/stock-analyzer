@@ -69,6 +69,9 @@ class SyncAsyncSessionAdapter:
     async def rollback(self) -> None:
         self._session.rollback()
 
+    async def delete(self, instance) -> None:
+        self._session.delete(instance)
+
 
 @dataclass
 class TestDb:
@@ -149,3 +152,17 @@ def stocks_router_module(monkeypatch: pytest.MonkeyPatch):
 
     sys.modules.pop("app.routers.stocks", None)
     return importlib.import_module("app.routers.stocks")
+
+
+@pytest.fixture
+def portfolio_router_module(monkeypatch: pytest.MonkeyPatch):
+    fake_session_module = types.ModuleType("app.database.session")
+
+    async def fake_get_db():
+        yield None
+
+    fake_session_module.get_db = fake_get_db
+    monkeypatch.setitem(sys.modules, "app.database.session", fake_session_module)
+
+    sys.modules.pop("app.routers.portfolio", None)
+    return importlib.import_module("app.routers.portfolio")

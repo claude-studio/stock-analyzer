@@ -24,12 +24,16 @@ from app.database.models import (
     DailyPrice,
     NewsArticle,
     NewsStockImpact,
+    PortfolioHolding,
     Stock,
     StockRelation,
 )
 
 logger = structlog.get_logger(__name__)
 KST = ZoneInfo("Asia/Seoul")
+
+US_MARKETS = {"NASDAQ", "NYSE", "AMEX", "ARCA", "BATS", "OTC", "US"}
+KR_MARKETS = {"KRX", "KOSPI", "KOSDAQ", "KONEX"}
 
 
 # ──────────────────────────────────────────────
@@ -146,6 +150,102 @@ async def list_stocks(
     query = query.order_by(Stock.ticker).limit(limit).offset(offset)
     result = await session.execute(query)
     return list(result.scalars().all()), total
+
+
+def get_market_currency(market: str) -> str:
+    """시장 코드로 통화 메타데이터를 추론한다."""
+    normalized = market.upper().strip()
+    if normalized in KR_MARKETS:
+        return "KRW"
+    if normalized in US_MARKETS:
+        return "USD"
+    return normalized or "UNKNOWN"
+
+
+async def list_portfolio_holdings(session: AsyncSession) -> list[PortfolioHolding]:
+    """포트폴리오 보유 종목 목록 조회."""
+    result = await session.execute(
+        select(PortfolioHolding)
+        .options(selectinload(PortfolioHolding.stock))
+        .order_by(PortfolioHolding.id.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def get_portfolio_holding(session: AsyncSession, holding_id: int) -> PortfolioHolding | None:
+    """ID로 포트폴리오 보유 종목 조회."""
+    result = await session.execute(
+        select(PortfolioHolding)
+        .options(selectinload(PortfolioHolding.stock))
+        .where(PortfolioHolding.id == holding_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_portfolio_holding_by_stock_id(
+    session: AsyncSession,
+    stock_id: int,
+) -> PortfolioHolding | None:
+    """stock_id로 기존 포트폴리오 보유 종목 조회."""
+    result = await session.execute(
+        select(PortfolioHolding)
+        .options(selectinload(PortfolioHolding.stock))
+        .where(PortfolioHolding.stock_id == stock_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def create_portfolio_holding(
+    session: AsyncSession,
+    stock: Stock,
+    quantity: Decimal,
+    average_price: Decimal,
+) -> PortfolioHolding:
+    """포트폴리오 보유 종목 생성."""
+    holding = PortfolioHolding(
+        stock_id=stock.id,
+        market=stock.market,
+        currency=get_market_currency(stock.market),
+        quantity=quantity,
+        average_price=average_price,
+    )
+    session.add(holding)
+    await session.flush()
+    return await get_portfolio_holding(session, holding.id)
+
+
+async def update_portfolio_holding(
+    session: AsyncSession,
+    holding: PortfolioHolding,
+    stock: Stock,
+    quantity: Decimal,
+    average_price: Decimal,
+) -> PortfolioHolding:
+    """포트폴리오 보유 종목 수정."""
+    holding.stock_id = stock.id
+    holding.market = stock.market
+    holding.currency = get_market_currency(stock.market)
+    holding.quantity = quantity
+    holding.average_price = average_price
+    await session.flush()
+    return await get_portfolio_holding(session, holding.id)
+
+
+async def delete_portfolio_holding(session: AsyncSession, holding: PortfolioHolding) -> None:
+    """포트폴리오 보유 종목 삭제."""
+    await session.delete(holding)
+    await session.flush()
+
+
+async def get_latest_daily_price(session: AsyncSession, stock_id: int) -> DailyPrice | None:
+    """종목의 최신 일봉 종가를 조회한다."""
+    result = await session.execute(
+        select(DailyPrice)
+        .where(DailyPrice.stock_id == stock_id)
+        .order_by(DailyPrice.trade_date.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 # ──────────────────────────────────────────────
