@@ -106,6 +106,33 @@ def _prices_to_indicators(prices: list) -> dict[str, Any] | None:
     return calculate_technical_indicators(df)
 
 
+def _daily_price_to_dict(price: Any) -> dict[str, Any]:
+    return {
+        "trade_date": str(price.trade_date),
+        "open": _decimal_to_float(price.open),
+        "high": _decimal_to_float(price.high),
+        "low": _decimal_to_float(price.low),
+        "close": _decimal_to_float(price.close),
+        "volume": price.volume,
+    }
+
+
+def _analysis_report_to_dict(report: Any) -> dict[str, Any]:
+    return {
+        "analysis_date": str(report.analysis_date),
+        "analysis_type": report.analysis_type,
+        "summary": report.summary,
+        "recommendation": report.recommendation,
+        "confidence": _decimal_to_float(report.confidence),
+        "target_price": _decimal_to_float(report.target_price),
+        "key_factors": report.key_factors,
+        "bull_case": report.bull_case,
+        "bear_case": report.bear_case,
+        "model_used": report.model_used,
+        "created_at": str(report.created_at) if report.created_at else None,
+    }
+
+
 @router.get("/news")
 async def list_news(
     session: DbSession,
@@ -226,14 +253,7 @@ async def get_stock_prices(
     return {
         "ticker": ticker,
         "prices": [
-            {
-                "trade_date": str(p.trade_date),
-                "open": _decimal_to_float(p.open),
-                "high": _decimal_to_float(p.high),
-                "low": _decimal_to_float(p.low),
-                "close": _decimal_to_float(p.close),
-                "volume": p.volume,
-            }
+            _daily_price_to_dict(p)
             for p in prices
         ],
     }
@@ -255,19 +275,7 @@ async def get_stock_analysis(ticker: str, session: DbSession) -> dict[str, Any]:
 
     return {
         "ticker": ticker,
-        "analysis": {
-            "analysis_date": str(report.analysis_date),
-            "analysis_type": report.analysis_type,
-            "summary": report.summary,
-            "recommendation": report.recommendation,
-            "confidence": _decimal_to_float(report.confidence),
-            "target_price": _decimal_to_float(report.target_price),
-            "key_factors": report.key_factors,
-            "bull_case": report.bull_case,
-            "bear_case": report.bear_case,
-            "model_used": report.model_used,
-            "created_at": str(report.created_at) if report.created_at else None,
-        },
+        "analysis": _analysis_report_to_dict(report),
     }
 
 
@@ -302,22 +310,11 @@ async def get_stock_detail(ticker: str, session: DbSession) -> dict[str, Any]:
     prices = await get_daily_prices(session, stock.id, limit=120)
     report = await get_latest_analysis(session, stock.id)
     news = await get_recent_news(session, stock_id=stock.id, limit=10)
+    latest_price = prices[-1] if prices else None
 
     analysis_data: dict[str, Any] | None = None
     if report:
-        analysis_data = {
-            "analysis_date": str(report.analysis_date),
-            "analysis_type": report.analysis_type,
-            "summary": report.summary,
-            "recommendation": report.recommendation,
-            "confidence": _decimal_to_float(report.confidence),
-            "target_price": _decimal_to_float(report.target_price),
-            "key_factors": report.key_factors,
-            "bull_case": report.bull_case,
-            "bear_case": report.bear_case,
-            "model_used": report.model_used,
-            "created_at": str(report.created_at) if report.created_at else None,
-        }
+        analysis_data = _analysis_report_to_dict(report)
 
     technical_data = _prices_to_indicators(prices)
 
@@ -329,16 +326,10 @@ async def get_stock_detail(ticker: str, session: DbSession) -> dict[str, Any]:
             "sector": stock.sector,
         },
         "prices": [
-            {
-                "trade_date": str(p.trade_date),
-                "open": _decimal_to_float(p.open),
-                "high": _decimal_to_float(p.high),
-                "low": _decimal_to_float(p.low),
-                "close": _decimal_to_float(p.close),
-                "volume": p.volume,
-            }
+            _daily_price_to_dict(p)
             for p in prices
         ],
+        "latest_price": _daily_price_to_dict(latest_price) if latest_price else None,
         "analysis": analysis_data,
         "news": [
             {

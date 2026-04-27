@@ -3,7 +3,15 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { fetchAPI } from "@/lib/api";
-import type { Stock, AnalysisReport, DailyPrice, TechnicalIndicators, NewsArticle, NewsImpactSummary } from "@/lib/api";
+import type {
+  Stock,
+  AnalysisReport,
+  DailyPrice,
+  TechnicalIndicators,
+  NewsArticle,
+  NewsImpactSummary,
+  StockDetailResponse,
+} from "@/lib/api";
 import { fetchNewsImpactSummary } from "@/lib/api";
 import StockChartWrapper from "@/components/charts/StockChartWrapper";
 
@@ -132,11 +140,17 @@ function SkeletonBlock({ className }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg border border-gray-800 bg-gray-900 ${className ?? "h-28"}`} />;
 }
 
-interface DetailResponse {
-  stock: Stock | null;
-  prices: DailyPrice[] | null;
-  analysis: AnalysisReport | null;
-  news: NewsArticle[] | null;
+function getNewestPrice(prices: DailyPrice[]): DailyPrice | null {
+  if (prices.length === 0) {
+    return null;
+  }
+
+  return prices.reduce((latest, current) => {
+    if (current.trade_date > latest.trade_date) {
+      return current;
+    }
+    return latest;
+  });
 }
 
 export default function StockDetailPage() {
@@ -155,12 +169,12 @@ export default function StockDetailPage() {
   useEffect(() => {
     if (!ticker) return;
 
-    fetchAPI<DetailResponse>(`/api/v1/stocks/${ticker}/detail`)
+    fetchAPI<StockDetailResponse>(`/api/v1/stocks/${ticker}/detail`)
       .then((data) => {
         setStock(data?.stock ?? null);
         setAnalysis(data?.analysis ?? null);
         const prices = Array.isArray(data?.prices) ? data.prices : [];
-        setLatestPrice(prices.length > 0 ? prices[prices.length - 1] : null);
+        setLatestPrice(data?.latest_price ?? getNewestPrice(prices));
         setNews(Array.isArray(data?.news) ? data.news.slice(0, 10) : []);
       })
       .catch(() => {
@@ -556,8 +570,8 @@ export default function StockDetailPage() {
         </div>
       ) : (
         <div className="rounded-lg border border-gray-800 bg-[#111111] p-6">
-          <p className="text-sm text-gray-400">아직 분석 리포트가 없습니다.</p>
-          <p className="mt-1 text-xs text-gray-500">16:30 스케줄러가 실행되면 자동으로 생성됩니다.</p>
+          <p className="text-sm text-gray-400">최종 일일 리포트가 아직 없습니다.</p>
+          <p className="mt-1 text-xs text-gray-500">장 마감 후 일일 리포트가 생성되면 여기에 표시됩니다.</p>
         </div>
       )}
 

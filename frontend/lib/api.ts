@@ -49,12 +49,24 @@ export interface DailyPrice {
 export interface AnalysisReport {
   summary: string;
   recommendation: string;
-  confidence: number;
+  confidence: number | null;
   target_price: number | null;
   bull_case: string | null;
   bear_case: string | null;
-  key_factors: string[];
+  key_factors: string[] | Record<string, string> | null;
   analysis_date: string;
+  analysis_type?: string;
+  model_used?: string | null;
+  created_at?: string | null;
+}
+
+export interface StockDetailResponse {
+  stock: Stock | null;
+  prices: DailyPrice[];
+  latest_price: DailyPrice | null;
+  analysis: AnalysisReport | null;
+  news: NewsArticle[];
+  technical: TechnicalIndicators | null;
 }
 
 export interface AccuracyStats {

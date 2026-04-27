@@ -745,12 +745,16 @@ async def get_past_analyses(
 async def get_latest_analysis(
     session: AsyncSession,
     stock_id: int,
+    analysis_type: str | None = "daily",
 ) -> AnalysisReport | None:
     """종목의 최신 분석 리포트 조회."""
+    query = select(AnalysisReport).where(AnalysisReport.stock_id == stock_id)
+    if analysis_type is not None:
+        query = query.where(AnalysisReport.analysis_type == analysis_type)
+
     result = await session.execute(
-        select(AnalysisReport)
-        .where(AnalysisReport.stock_id == stock_id)
-        .order_by(AnalysisReport.analysis_date.desc())
+        query
+        .order_by(AnalysisReport.analysis_date.desc(), AnalysisReport.created_at.desc())
         .limit(1)
     )
     return result.scalar_one_or_none()
